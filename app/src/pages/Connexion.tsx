@@ -13,7 +13,7 @@ function Cadre({ children, titre, sousTitre }: { children: React.ReactNode; titr
         {children}
         <Installation variante="carte" />
       </div>
-      <p className="pied">Association Développement par la Gouvernance</p>
+      <p className="pied">Association Développement par la Gouvernance · Octobre 2026</p>
     </div>
   );
 }
