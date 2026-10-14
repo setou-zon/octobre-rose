@@ -1,7 +1,7 @@
 import type { Formulaire, Valeurs } from '../forms/types';
 import type { Compte, Site } from './auth';
 import { TABLES, compteurSuivant, ecrire, ecrireLot, lire, metaEcrire, metaLire, tout, type Fiche, type Table } from './db';
-import { programmerSynchro } from './sync';
+import { compterEnAttente, programmerSynchro } from './sync';
 
 // ---------------------------------------------------------------------------
 // Nettoyage et contrôle des valeurs d'un formulaire
@@ -39,7 +39,7 @@ export function champsManquants(f: Formulaire, v: Valeurs): string[] {
 // ---------------------------------------------------------------------------
 // Événement de mise à jour (le tableau de bord se rafraîchit tout seul)
 // ---------------------------------------------------------------------------
-const signaler = () => { window.dispatchEvent(new Event('or26-donnees')); programmerSynchro(); };
+const signaler = () => { window.dispatchEvent(new Event('or26-donnees')); compterEnAttente(); programmerSynchro(); };
 
 // ---------------------------------------------------------------------------
 // Lecture avec droits : un agent ne voit les fiches nominatives que de son site

@@ -4,7 +4,7 @@ import { supabase } from './lib/supabase';
 import { etatSync, synchroniser, type EtatSync } from './lib/sync';
 import { Ruban } from './components/Ruban';
 import { Installation } from './components/Installation';
-import { PageConnexion, PageEnAttente, PageNonConfiguree } from './pages/Connexion';
+import { PageConnexion, PageEnAttente, PageNonConfiguree, PageNouveauMotDePasse } from './pages/Connexion';
 import { PageCommunication, PageSensibilisation } from './pages/Simples';
 import { PageNouvelleFiche, PageReferences, PageRegistre } from './pages/Depistage';
 import { PageAccueil, PageIndicateurs, PageSynthese } from './pages/Pilotage';
@@ -24,7 +24,8 @@ const PAGES: Page[] = [
   { id: 'equipe', titre: 'Équipe et sites', court: 'Équipe', admin: true },
 ];
 
-const pageDepuisHash = () => window.location.hash.replace('#/', '') || 'accueil';
+// les liens reçus par e-mail ajoutent « #access_token=… » : on revient alors au tableau de bord
+const pageDepuisHash = () => (window.location.hash.startsWith('#/') ? window.location.hash.slice(2) : '') || 'accueil';
 
 function Coquille() {
   const { etat, compte, deconnexion } = useAuth();
@@ -62,6 +63,7 @@ function Coquille() {
 
   if (etat === 'chargement') return <div className="chargement"><Ruban className="ruban-chargement" />Chargement…</div>;
   if (etat === 'non_configure') return <PageNonConfiguree />;
+  if (etat === 'nouveau_mot_de_passe') return <PageNouveauMotDePasse />;
   if (etat === 'deconnecte' || !compte) return <PageConnexion />;
   if (etat === 'en_attente') return <PageEnAttente />;
 

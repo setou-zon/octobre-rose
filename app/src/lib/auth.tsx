@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import { demanderPersistance, metaEcrire, metaLire } from './db';
-import { baseConfiguree, emailDe, messageErreur, supabase } from './supabase';
+import { adresseRetour, baseConfiguree, messageErreur, supabase } from './supabase';
 
 export type Role = 'admin' | 'agent';
 /** Profil d'un membre de l'équipe (table « profils » de la base centrale) */
@@ -28,14 +28,21 @@ export function verifierRegles(motDePasse: string): string | null {
   return null;
 }
 
-type Etat = 'chargement' | 'non_configure' | 'deconnecte' | 'en_attente' | 'connecte';
+// Lien « mot de passe oublié » : repéré avant que Supabase ne nettoie l'adresse
+let recuperation = typeof window !== 'undefined' && /type=recovery/.test(window.location.hash);
+
+type Etat = 'chargement' | 'non_configure' | 'deconnecte' | 'en_attente' | 'connecte' | 'nouveau_mot_de_passe';
 type Ctx = {
   etat: Etat;
   compte: Compte | null;
   sites: Site[];
-  connexion: (identifiant: string, motDePasse: string) => Promise<void>;
+  connexion: (email: string, motDePasse: string) => Promise<void>;
   deconnexion: () => Promise<void>;
-  inscrire: (p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) => Promise<void>;
+  /** Renvoie true si un e-mail de confirmation a été envoyé (compte à confirmer) */
+  inscrire: (p: { nom: string; email: string; motDePasse: string; telephone: string; site_id: number | null }) => Promise<boolean>;
+  motDePasseOublie: (email: string) => Promise<void>;
+  changerMotDePasse: (motDePasse: string) => Promise<void>;
+  renvoyerConfirmation: (email: string) => Promise<void>;
   rafraichir: () => Promise<void>;
 };
 const AuthCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -72,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data } = await supabase.auth.getSession();
     const id = data.session?.user.id;
     if (!id) { setCompte(null); setEtat('deconnecte'); return; }
+    if (recuperation) { setEtat('nouveau_mot_de_passe'); return; }
     const p = await chargerProfil(id);
     setCompte(p);
     setEtat(!p ? 'deconnecte' : p.valide && p.actif ? 'connecte' : 'en_attente');
@@ -82,27 +90,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     rafraichir().catch(() => setEtat('deconnecte'));
     const { data } = supabase.auth.onAuthStateChange((evt) => {
       if (evt === 'SIGNED_OUT') { setCompte(null); setEtat('deconnecte'); }
+      // retour du lien « mot de passe oublié »
+      if (evt === 'PASSWORD_RECOVERY') { recuperation = true; setEtat('nouveau_mot_de_passe'); }
+      // retour du lien de confirmation de l'adresse e-mail
+      if (evt === 'SIGNED_IN') setTimeout(() => { rafraichir().catch(() => {}); }, 0);
     });
     return () => data.subscription.unsubscribe();
   }, [rafraichir]);
 
-  async function connexion(identifiant: string, motDePasse: string) {
-    const { error } = await supabase.auth.signInWithPassword({ email: emailDe(identifiant), password: motDePasse });
+  async function connexion(email: string, motDePasse: string) {
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password: motDePasse });
     if (error) throw new Error(messageErreur(error));
     await rafraichir();
   }
 
-  async function inscrire(p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) {
+  async function inscrire(p: { nom: string; email: string; motDePasse: string; telephone: string; site_id: number | null }) {
     const err = verifierRegles(p.motDePasse); if (err) throw new Error(err);
-    const identifiant = p.identifiant.trim().toLowerCase();
-    if (!/^[a-z0-9._-]{3,30}$/.test(identifiant)) throw new Error('Identifiant : 3 à 30 lettres, chiffres, points ou tirets, sans espace ni accent.');
+    const email = p.email.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Adresse e-mail invalide.');
     if (!p.nom.trim()) throw new Error('Indiquez votre nom.');
-    const { error } = await supabase.auth.signUp({
-      email: emailDe(identifiant), password: p.motDePasse,
-      options: { data: { identifiant, nom_complet: p.nom.trim(), telephone: p.telephone.trim(), site_souhaite: p.site_id ?? '' } },
+    const { data, error } = await supabase.auth.signUp({
+      email, password: p.motDePasse,
+      options: {
+        emailRedirectTo: adresseRetour(),
+        data: { identifiant: email, nom_complet: p.nom.trim(), telephone: p.telephone.trim(), site_souhaite: p.site_id ?? '' },
+      },
     });
     if (error) throw new Error(messageErreur(error));
+    // Supabase ne signale pas une adresse déjà inscrite : il renvoie un compte sans identité
+    if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+      throw new Error('Un compte existe déjà avec cette adresse e-mail. Connectez-vous ou utilisez « Mot de passe oublié ».');
+    }
+    if (data.session) { await rafraichir(); return false; }
+    return true;
+  }
+
+  async function motDePasseOublie(email: string) {
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo: adresseRetour() });
+    if (error) throw new Error(messageErreur(error));
+  }
+
+  async function changerMotDePasse(motDePasse: string) {
+    const err = verifierRegles(motDePasse); if (err) throw new Error(err);
+    const { error } = await supabase.auth.updateUser({ password: motDePasse });
+    if (error) throw new Error(messageErreur(error));
+    recuperation = false;
     await rafraichir();
+  }
+
+  async function renvoyerConfirmation(email: string) {
+    const { error } = await supabase.auth.resend({ type: 'signup', email: email.trim().toLowerCase(), options: { emailRedirectTo: adresseRetour() } });
+    if (error) throw new Error(messageErreur(error));
   }
 
   async function deconnexion() {
@@ -111,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthCtx.Provider value={{ etat, compte, sites, connexion, deconnexion, inscrire, rafraichir }}>
+    <AuthCtx.Provider value={{ etat, compte, sites, connexion, deconnexion, inscrire, motDePasseOublie, changerMotDePasse, renvoyerConfirmation, rafraichir }}>
       {children}
     </AuthCtx.Provider>
   );

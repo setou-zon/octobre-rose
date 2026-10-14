@@ -24,9 +24,20 @@ Chaque fiche remplie se **télécharge en PDF** (bouton « Télécharger la fich
 
 ## Mise en route
 
-1. Dans Supabase → **Authentication → Sign In / Providers → Email**, désactiver **Confirm email** (les comptes utilisent un identifiant, pas une vraie adresse ; c'est l'administrateur qui valide).
-2. **Le tout premier compte créé devient administrateur.** La coordination ouvre l'adresse, choisit *Créer mon compte* avant tout le monde.
-3. Chaque agent crée son compte (nom, téléphone, site, identifiant, mot de passe). Le compte est actif après validation dans **Équipe → Demandes de compte à valider**.
+Comptes : **inscription avec une vraie adresse e-mail → confirmation par le lien reçu → activation par un administrateur.** Sans l'activation, le compte n'accède à aucune donnée.
+
+Réglages Supabase (une seule fois, dans le projet « octobre rose ») :
+
+1. **Authentication → URL Configuration** : *Site URL* = `https://setou-zon.github.io/octobre-rose/`, et ajouter la même adresse dans *Redirect URLs*. Sinon les liens reçus par e-mail ouvrent une mauvaise page.
+2. **Envoi des e-mails (SMTP)** : le service d'e-mails intégré de Supabase n'envoie qu'aux membres de l'équipe Supabase, avec quelques messages par heure. Pour les agents, configurer un service SMTP dans **Project Settings → Authentication → SMTP Settings** (par ex. Brevo ou Resend, offres gratuites).
+3. Facultatif : **Authentication → Email Templates**, coller les modèles en français de `supabase/templates/` (confirmation et mot de passe).
+4. Laisser **Confirm email** activé.
+
+Ensuite :
+
+1. **Le tout premier compte créé devient administrateur** (dès qu'il a confirmé son e-mail). La coordination s'inscrit avant de partager le lien.
+2. Chaque agent s'inscrit (nom, e-mail, téléphone, site, mot de passe) et confirme son adresse ; il apparaît dans **Équipe → Demandes de compte à valider**, où l'administrateur l'active et choisit son site.
+3. *Mot de passe oublié* envoie un lien par e-mail pour en choisir un nouveau.
 4. La création du compte et la première connexion demandent du réseau ; ensuite la saisie fonctionne sans internet.
 
 Le code bénéficiaire suit le format de la fiche papier : `OR26-CBP-07-015`. Si deux téléphones ont donné le même code le même jour, la synchronisation renumérote la fiche arrivée en second (`OR26-CBP-07-015B`) et l'affiche dans **Données** pour correction sur la fiche papier.

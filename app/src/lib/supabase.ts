@@ -11,18 +11,20 @@ const cle = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
 export const baseConfiguree = Boolean(url && cle);
 
 export const supabase = createClient(url || 'http://localhost:54321', cle || 'cle-absente', {
-  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'or26-auth' },
+  // « implicit » : le lien de confirmation reçu par e-mail fonctionne même s'il est ouvert sur un autre appareil
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'or26-auth', flowType: 'implicit', detectSessionInUrl: true },
 });
 
-/** Les comptes utilisent un identifiant ; Supabase demande une adresse : on en fabrique une. */
-export const DOMAINE_COMPTES = 'agents.octobre-rose-adg.org';
-export const emailDe = (identifiant: string) => `${identifiant.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${DOMAINE_COMPTES}`;
+/** Adresse de retour des liens envoyés par e-mail (confirmation, mot de passe oublié) */
+export const adresseRetour = () => window.location.origin + window.location.pathname;
 
 export function messageErreur(e: unknown): string {
   const m = (e as { message?: string })?.message ?? String(e);
-  if (/Invalid login credentials/i.test(m)) return 'Identifiant ou mot de passe incorrect.';
-  if (/already registered|already been registered|User already/i.test(m)) return 'Cet identifiant est déjà pris, choisissez-en un autre.';
-  if (/Email not confirmed/i.test(m)) return 'Compte pas encore activé côté serveur (confirmation e-mail activée dans Supabase).';
+  if (/Invalid login credentials/i.test(m)) return 'Adresse e-mail ou mot de passe incorrect.';
+  if (/already registered|already been registered|User already/i.test(m)) return 'Un compte existe déjà avec cette adresse e-mail. Connectez-vous ou utilisez « Mot de passe oublié ».';
+  if (/Email not confirmed/i.test(m)) return 'Adresse e-mail pas encore confirmée : ouvrez le lien reçu par e-mail (pensez aux courriers indésirables).';
+  if (/sending (confirmation|recovery)|send.*email|Email address not authorized/i.test(m)) return 'L’e-mail n’a pas pu être envoyé. L’administrateur doit configurer l’envoi d’e-mails dans Supabase (SMTP).';
+  if (/invalid.*email|Unable to validate email/i.test(m)) return 'Adresse e-mail invalide.';
   if (/Password should be/i.test(m)) return 'Mot de passe trop court (8 caractères minimum).';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Pas de connexion internet. La première connexion sur un téléphone demande du réseau.';
   if (/row-level security|permission denied/i.test(m)) return 'Action refusée : droits insuffisants.';

@@ -179,7 +179,7 @@ export function PageEquipe() {
 
   return (
     <section>
-      <p className="intro">Chaque personne crée son compte depuis l’écran de connexion ; vous le validez ici et choisissez son site. Un agent rattaché à un site ne voit que les fiches nominatives de ce site.</p>
+      <p className="intro">Chaque personne crée son compte avec son adresse e-mail et la confirme par le lien reçu ; vous validez ensuite le compte ici et choisissez son site. Un agent rattaché à un site ne voit que les fiches nominatives de ce site.</p>
       {message && <div className={`alerte ${message.type}`}>{message.texte}</div>}
       {chargement && <p className="chargement">Chargement…</p>}
 
@@ -210,7 +210,7 @@ export function PageEquipe() {
       {equipe.length > 0 && (
         <div className="tableau-defile">
           <table>
-            <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Site</th><th>Accès</th></tr></thead>
+            <thead><tr><th>Nom</th><th>E-mail</th><th>Rôle</th><th>Site</th><th>Accès</th></tr></thead>
             <tbody>
               {equipe.map((p) => {
                 const dernierAdmin = p.role === 'admin' && adminsActifs <= 1;
