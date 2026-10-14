@@ -17,7 +17,7 @@ type Props = {
 };
 
 export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler, onSupprimer }: Props) {
-  const { compte, sites, appareil } = useAuth();
+  const { compte, sites } = useAuth();
   const [v, setV] = useState<Valeurs>(() => ({
     ...(form.defaut?.() ?? {}),
     ...(compte?.site_id && !initial ? { site_id: compte.site_id } : {}),
@@ -40,7 +40,7 @@ export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler
     setErreurs([]);
     setEnvoi(true);
     try {
-      const ligne = await enregistrer(form.table as Table, { ...nettoyer(form, v), ...(extra ?? {}) }, { compte: compte!, sites, appareil }, id);
+      const ligne = await enregistrer(form.table as Table, { ...nettoyer(form, v), ...(extra ?? {}) }, { compte: compte!, sites }, id);
       onEnregistre(ligne);
     } catch (err) {
       setErreurs([(err as Error).message ?? String(err)]);

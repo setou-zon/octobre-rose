@@ -70,7 +70,7 @@ export async function toutesLesDonnees(compte: Compte | null) {
 // ---------------------------------------------------------------------------
 // Enregistrement
 // ---------------------------------------------------------------------------
-export async function enregistrer(table: Table, valeurs: Valeurs, ctx: { compte: Compte; sites: Site[]; appareil: string }, id?: string): Promise<Fiche> {
+export async function enregistrer(table: Table, valeurs: Valeurs, ctx: { compte: Compte; sites: Site[] }, id?: string): Promise<Fiche> {
   const maintenant = new Date().toISOString();
   let fiche: Fiche;
 
@@ -85,20 +85,29 @@ export async function enregistrer(table: Table, valeurs: Valeurs, ctx: { compte:
   } else {
     fiche = {
       ...valeurs, id: crypto.randomUUID(), created_at: maintenant, updated_at: maintenant,
-      saisi_par: ctx.compte.nom_complet, appareil: ctx.appareil,
+      saisi_par: ctx.compte.nom_complet,
     };
     if (table === 'depistages') {
       const site = ctx.sites.find((s) => s.id === Number(valeurs.site_id));
       if (!site) throw new Error('Choisissez le site.');
       const date = String(valeurs.date_depistage);
-      const n = await compteurSuivant(`ordre-${site.code}-${date}`);
+      // numéro suivant : on repart du plus grand numéro déjà connu (fiches importées comprises)
+      const existants = (await tout('depistages')).filter((x) => x.site_id === site.id && x.date_depistage === date);
+      let n = Math.max(await compteurSuivant(`ordre-${site.code}-${date}`), ...existants.map((x) => Number(x.numero_ordre) + 1 || 1));
+      const pris = new Set(existants.map((x) => x.code));
+      const fabriquer = (k: number) => `OR${date.slice(2, 4)}-${site.code}-${date.slice(8, 10)}-${String(k).padStart(3, '0')}`;
+      while (pris.has(fabriquer(n))) n++;
+      await metaEcrire(`ordre-${site.code}-${date}`, n);
       fiche.numero_ordre = n;
-      // Le code appareil évite que deux appareils donnent le même code le même jour
-      fiche.code = `OR${date.slice(2, 4)}-${site.code}-${date.slice(8, 10)}-${ctx.appareil}${String(n).padStart(3, '0')}`;
+      fiche.code = fabriquer(n);
     }
     if (table === 'references_cas') {
-      const n = await compteurSuivant('reference');
-      fiche.numero = `R${String(valeurs.date_reference ?? maintenant).slice(2, 4)}-${ctx.appareil}${String(n).padStart(4, '0')}`;
+      const annee = String(valeurs.date_reference ?? maintenant).slice(2, 4);
+      const existants = new Set((await tout('references_cas')).map((r) => r.numero));
+      let n = await compteurSuivant('reference');
+      while (existants.has(`R${annee}-${String(n).padStart(4, '0')}`)) n++;
+      await metaEcrire('reference', n);
+      fiche.numero = `R${annee}-${String(n).padStart(4, '0')}`;
     }
     if (table === 'syntheses_journalieres') {
       const existe = (await tout(table)).find((s) => !s.supprime && s.site_id === valeurs.site_id && s.date_synthese === valeurs.date_synthese);
@@ -137,7 +146,7 @@ export async function supprimer(table: Table, id: string, compte: Compte) {
 // ---------------------------------------------------------------------------
 export const FORMAT_PAQUET = 'octobre-rose-2026/v1';
 
-export async function exporterPaquet(compte: Compte, appareil: string) {
+export async function exporterPaquet(compte: Compte) {
   const donnees = {} as Record<Table, Fiche[]>;
   for (const t of TABLES) {
     // le paquet contient aussi les suppressions, pour les propager
@@ -145,28 +154,47 @@ export async function exporterPaquet(compte: Compte, appareil: string) {
     const ids = new Set(visibles.map((f) => f.id));
     donnees[t] = (await tout(t)).filter((f) => ids.has(f.id) || (f.supprime && (compte.role === 'admin' || t !== 'depistages' || f.site_id === compte.site_id)));
   }
-  const paquet = { format: FORMAT_PAQUET, appareil, exporte_par: compte.nom_complet, exporte_le: new Date().toISOString(), sites: await metaLire('sites'), donnees };
+  const paquet = { format: FORMAT_PAQUET, exporte_par: compte.nom_complet, exporte_le: new Date().toISOString(), sites: await metaLire('sites'), donnees };
   const nb = Object.values(donnees).reduce((s, l) => s + l.filter((f) => !f.supprime).length, 0);
   const date = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
-  telecharger(`octobre-rose_appareil-${appareil}_${date}.json`, JSON.stringify(paquet), 'application/json');
+  const qui = compte.identifiant.replace(/[^a-z0-9_-]/gi, '') || 'agent';
+  telecharger(`octobre-rose_${qui}_${date}.json`, JSON.stringify(paquet), 'application/json');
   await metaEcrire('derniere-sauvegarde', new Date().toISOString());
   signaler();
   return nb;
 }
 
-export type BilanImport = { ajoutees: number; misesAJour: number; ignorees: number; appareil: string; exporte_par: string };
+export type BilanImport = { ajoutees: number; misesAJour: number; ignorees: number; exporte_par: string; fichier: string; renumerotees: string[] };
 
-export async function importerPaquet(texte: string): Promise<BilanImport> {
-  let p: { format?: string; appareil?: string; exporte_par?: string; sites?: Site[]; donnees?: Record<string, Fiche[]> };
+export async function importerPaquet(texte: string, fichier = ''): Promise<BilanImport> {
+  let p: { format?: string; exporte_par?: string; sites?: Site[]; donnees?: Record<string, Fiche[]> };
   try { p = JSON.parse(texte); } catch { throw new Error('Ce fichier n’est pas un export de l’application.'); }
   if (p.format !== FORMAT_PAQUET || !p.donnees) throw new Error('Ce fichier n’est pas un export Octobre Rose 2026.');
-  const bilan: BilanImport = { ajoutees: 0, misesAJour: 0, ignorees: 0, appareil: p.appareil ?? '?', exporte_par: p.exporte_par ?? '?' };
+  const bilan: BilanImport = { ajoutees: 0, misesAJour: 0, ignorees: 0, exporte_par: p.exporte_par ?? '?', fichier, renumerotees: [] };
   for (const t of TABLES) {
     const entrants = (p.donnees[t] ?? []).filter((f) => f && typeof f.id === 'string' && typeof f.updated_at === 'string');
     const locaux = new Map((await tout(t)).map((f) => [f.id, f]));
     const aEcrire: Fiche[] = [];
-    for (const f of entrants) {
+    // Deux téléphones ont pu donner le même code le même jour : la fiche importée reçoit une lettre (B, C…)
+    const champCode = t === 'depistages' ? 'code' : t === 'references_cas' ? 'numero' : null;
+    const codesPris = new Map<string, string>();
+    if (champCode) for (const l of locaux.values()) if (l[champCode]) codesPris.set(String(l[champCode]), l.id);
+    for (const f0 of entrants) {
+      let f = f0;
       const l = locaux.get(f.id);
+      // fiche déjà renumérotée lors d'un import précédent : elle garde son nouveau code
+      if (champCode && l?.code_initial && l.code_initial === f[champCode]) f = { ...f, [champCode]: l[champCode], code_initial: l.code_initial };
+      if (champCode && f[champCode]) {
+        const code = String(f[champCode]);
+        const proprietaire = codesPris.get(code);
+        if (proprietaire && proprietaire !== f.id) {
+          let i = 1, nouveau = '';
+          do nouveau = `${code}${String.fromCharCode(65 + i++)}`; while (codesPris.has(nouveau));
+          f = { ...f, [champCode]: nouveau, code_initial: code };
+          if (!f.supprime) bilan.renumerotees.push(`${code} → ${nouveau}`);
+        }
+        codesPris.set(String(f[champCode]), f.id);
+      }
       if (!l) { aEcrire.push(f); bilan.ajoutees++; }
       else if (f.updated_at > l.updated_at) { aEcrire.push(f); bilan.misesAJour++; }
       else bilan.ignorees++;

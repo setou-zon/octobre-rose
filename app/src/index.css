@@ -21,9 +21,10 @@
   --rayon: 14px;
   --ombre: 0 1px 2px rgba(94, 11, 48, .05), 0 4px 16px rgba(94, 11, 48, .05);
   color-scheme: light;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif;
-  font-size: 16px;
-  line-height: 1.45;
+  font-family: 'EB Garamond', Garamond, 'Times New Roman', serif;
+  font-size: 18px;
+  line-height: 1.4;
+  font-variant-numeric: lining-nums;
   color: var(--encre);
   background: var(--fond);
 }
@@ -155,7 +156,7 @@ input.cible { width: 7rem; text-align: right; min-height: 36px; padding: .3rem .
 .banniere::after { content: ''; position: absolute; right: -40px; bottom: -60px; width: 220px; height: 220px; border-radius: 50%; border: 28px solid rgba(255, 255, 255, .07); }
 .banniere-ruban { width: 46px; height: 86px; color: #fff; grid-row: span 2; }
 .banniere-sur { margin: 0; font-size: .82rem; text-transform: uppercase; letter-spacing: .08em; opacity: .85; }
-.banniere-titre { margin: .1rem 0 .2rem; font-size: 2rem; letter-spacing: -.02em; }
+.banniere-titre { margin: .1rem 0 .2rem; font-size: 2.5rem; font-weight: 600; letter-spacing: -.01em; }
 .banniere-texte { margin: 0; opacity: .95; }
 .banniere-actions { grid-column: 2; display: flex; gap: .6rem; flex-wrap: wrap; position: relative; z-index: 1; }
 .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .9rem; margin-bottom: 1rem; }
@@ -164,7 +165,7 @@ input.cible { width: 7rem; text-align: right; min-height: 36px; padding: .3rem .
 .carte h3 { margin-top: 0; }
 .tuile { display: flex; flex-direction: column; gap: .35rem; border-top: 4px solid var(--rose); }
 .tuile-libelle { font-size: .86rem; color: var(--gris); }
-.tuile-valeur { font-size: 2.1rem; font-weight: 750; color: var(--rose-fonce); font-variant-numeric: tabular-nums; line-height: 1.1; }
+.tuile-valeur { font-size: 2.4rem; font-weight: 600; color: var(--rose-fonce); font-variant-numeric: tabular-nums; line-height: 1.1; }
 .tuile-detail { font-size: .8rem; color: var(--gris); }
 .jauge { height: 6px; border-radius: 3px; background: var(--rose-pale); overflow: hidden; }
 .jauge div { height: 100%; background: var(--rose); border-radius: 3px; }
@@ -255,3 +256,13 @@ input.cible { width: 7rem; text-align: right; min-height: 36px; padding: .3rem .
   body, :root { background: #fff; }
   .tableau-defile, .carte { border: 0; box-shadow: none; }
 }
+
+/* Demandes de compte */
+.demandes { border-color: var(--rose-trait); background: var(--rose-brume); margin: 0 0 1rem; }
+.liste-demandes { list-style: none; margin: 0; padding: 0; }
+.liste-demandes li { display: grid; grid-template-columns: 1fr 13rem auto; gap: .75rem; align-items: center; padding: .6rem 0; border-bottom: 1px solid var(--trait); }
+.liste-demandes li:last-child { border-bottom: 0; }
+.actions-demande { display: flex; gap: .4rem; }
+.btn.petit { min-height: 36px; padding: .3rem .8rem; font-size: .92rem; }
+.alerte-demandes { display: block; text-decoration: none; }
+@media (max-width: 760px) { .liste-demandes li { grid-template-columns: 1fr; } }

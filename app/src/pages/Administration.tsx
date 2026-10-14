@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { LIBELLES } from '../forms/definitions';
 import { preparerMotDePasse, useAuth, verifierRegles, type Compte, type Role, type Site } from '../lib/auth';
 import { exporterConfiguration } from '../lib/configuration';
-import { TABLES, ecrire, metaEcrire, metaLire, tout } from '../lib/db';
+import { TABLES, ecrire, effacer, metaEcrire, metaLire, tout } from '../lib/db';
 import { dateFr } from '../lib/format';
 import { exporterPaquet, importerPaquet, liste, type BilanImport } from '../lib/store';
 
@@ -20,7 +20,7 @@ const NOMS_TABLES: Record<string, string> = {
 // Données : envoi à la coordination, import, sauvegarde
 // ---------------------------------------------------------------------------
 export function PageDonnees() {
-  const { compte, appareil } = useAuth();
+  const { compte } = useAuth();
   const admin = compte?.role === 'admin';
   const [compteurs, setCompteurs] = useState<Record<string, number>>({});
   const [derniere, setDerniere] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export function PageDonnees() {
   useEffect(() => { charger(); }, [charger]);
 
   async function exporter() {
-    const n = await exporterPaquet(compte!, appareil);
+    const n = await exporterPaquet(compte!);
     setMessage({ type: 'succes', texte: `Fichier créé avec ${n} fiche(s). Envoyez-le à la coordination (WhatsApp, e-mail, clé USB).` });
     charger();
   }
@@ -45,7 +45,7 @@ export function PageDonnees() {
     if (!fichiers?.length) return;
     const res: BilanImport[] = [];
     try {
-      for (const f of Array.from(fichiers)) res.push(await importerPaquet(await f.text()));
+      for (const f of Array.from(fichiers)) res.push(await importerPaquet(await f.text(), f.name));
       setBilans(res);
       setMessage({ type: 'succes', texte: `${res.length} fichier(s) importé(s).` });
     } catch (e) {
@@ -59,7 +59,7 @@ export function PageDonnees() {
 
   return (
     <section>
-      <p className="intro">Les fiches sont enregistrées sur cet appareil (code <b>{appareil}</b>), même sans internet. Pour regrouper les données de tous les appareils, chaque agent envoie son fichier à la coordination, qui l’importe.</p>
+      <p className="intro">Les fiches sont enregistrées sur cet appareil, même sans internet. Pour regrouper les données de tous les appareils, chaque agent envoie son fichier à la coordination, qui l’importe.</p>
       {message && <div className={`alerte ${message.type}`} role="status">{message.texte}</div>}
 
       <div className="deux-colonnes">
@@ -80,7 +80,12 @@ export function PageDonnees() {
             {bilans.length > 0 && (
               <ul className="bilans">
                 {bilans.map((b, i) => (
-                  <li key={i}>Appareil <b>{b.appareil}</b> ({b.exporte_par}) : {b.ajoutees} nouvelle(s), {b.misesAJour} mise(s) à jour, {b.ignorees} déjà à jour</li>
+                  <li key={i}>
+                    <b>{b.exporte_par}</b> : {b.ajoutees} nouvelle(s), {b.misesAJour} mise(s) à jour, {b.ignorees} déjà à jour
+                    {b.renumerotees.length > 0 && (
+                      <div className="alerte attention">Codes déjà utilisés par une autre fiche, renumérotés : {b.renumerotees.join(' · ')}. Corrigez-les sur les fiches papier.</div>
+                    )}
+                  </li>
                 ))}
               </ul>
             )}
@@ -103,7 +108,7 @@ export function PageDonnees() {
 // Équipe : comptes, sites, configuration (administrateur)
 // ---------------------------------------------------------------------------
 export function PageEquipe() {
-  const { compte: moi, sites, appareil, rafraichir } = useAuth();
+  const { compte: moi, sites, rafraichir } = useAuth();
   const [comptes, setComptes] = useState<Compte[]>([]);
   const [formulaire, setFormulaire] = useState<Partial<Compte> & { mdp?: string } | null>(null);
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null);
@@ -114,7 +119,22 @@ export function PageEquipe() {
   }, []);
   useEffect(() => { charger(); }, [charger]);
 
-  const adminsActifs = comptes.filter((c) => c.role === 'admin' && c.actif);
+  const adminsActifs = comptes.filter((c) => c.role === 'admin' && c.actif && !c.en_attente);
+  const demandes = comptes.filter((c) => c.en_attente);
+  const [choixSite, setChoixSite] = useState<Record<string, string>>({});
+
+  async function valider(c: Compte) {
+    const site = choixSite[c.id] ?? (c.site_souhaite != null ? String(c.site_souhaite) : '');
+    await ecrire('comptes', { ...c, actif: true, en_attente: false, site_id: site ? Number(site) : null });
+    setMessage({ type: 'succes', texte: `Compte de ${c.nom_complet} validé : la personne peut se connecter sur cet appareil.` });
+    charger();
+  }
+  async function refuser(c: Compte) {
+    if (!confirm(`Refuser et supprimer la demande de ${c.nom_complet} ?`)) return;
+    await effacer('comptes', c.id);
+    setMessage({ type: 'succes', texte: 'Demande refusée.' });
+    charger();
+  }
 
   async function enregistrerCompte(e: React.FormEvent) {
     e.preventDefault(); setMessage(null);
@@ -130,7 +150,7 @@ export function PageEquipe() {
       const c: Compte = {
         ...(existant ?? { id: crypto.randomUUID(), created_at: new Date().toISOString(), sel: '', empreinte: '' }),
         identifiant, nom_complet: f.nom_complet!.trim(), role: (f.role ?? 'agent') as Role,
-        site_id: f.site_id ?? null, actif: f.actif ?? true,
+        site_id: f.site_id ?? null, actif: f.actif ?? true, en_attente: false,
         ...(f.mdp ? await preparerMotDePasse(f.mdp) : {}),
       };
       await ecrire('comptes', c);
@@ -195,8 +215,32 @@ export function PageEquipe() {
 
   return (
     <section>
-      <p className="intro">Créez un compte par personne. Les comptes sont propres à chaque appareil : après une modification, exportez la configuration et installez-la sur les autres appareils.</p>
+      <p className="intro">Chaque personne crée son compte depuis l’écran de connexion ; vous le validez ici. Les comptes sont enregistrés sur chaque téléphone : pour retrouver les mêmes comptes ailleurs, exportez la configuration et installez-la sur les autres téléphones.</p>
       {message && <div className={`alerte ${message.type}`}>{message.texte}</div>}
+      {demandes.length > 0 && (
+        <div className="carte demandes">
+          <h3>Demandes de compte à valider ({demandes.length})</h3>
+          <ul className="liste-demandes">
+            {demandes.map((c) => (
+              <li key={c.id}>
+                <div>
+                  <b>{c.nom_complet}</b> <span className="mono discret">{c.identifiant}</span>
+                  <div className="discret">{c.telephone ? `${c.telephone} · ` : ''}demande du {dateFr(c.created_at)}</div>
+                </div>
+                <select aria-label={`Site de ${c.nom_complet}`} value={choixSite[c.id] ?? (c.site_souhaite != null ? String(c.site_souhaite) : '')}
+                  onChange={(e) => setChoixSite({ ...choixSite, [c.id]: e.target.value })}>
+                  <option value="">Tous les sites</option>
+                  {sites.map((s) => <option key={s.id} value={s.id}>{s.nom}</option>)}
+                </select>
+                <div className="actions-demande">
+                  <button className="btn principal petit" onClick={() => valider(c)}>Valider</button>
+                  <button className="btn secondaire petit" onClick={() => refuser(c)}>Refuser</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="barre">
         <button className="btn principal" onClick={() => { setMessage(null); setFormulaire({ role: 'agent', actif: true, site_id: null }); }}>+ Nouveau compte</button>
         <button className="btn secondaire" onClick={exporterConfiguration}>Exporter la configuration</button>
@@ -205,7 +249,7 @@ export function PageEquipe() {
         <table>
           <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Site</th><th>État</th></tr></thead>
           <tbody>
-            {comptes.map((c) => (
+            {comptes.filter((c) => !c.en_attente).map((c) => (
               <tr key={c.id} className="cliquable" tabIndex={0} onClick={() => { setMessage(null); setFormulaire({ ...c, mdp: '' }); }}
                 onKeyDown={(e) => { if (e.key === 'Enter') setFormulaire({ ...c, mdp: '' }); }}>
                 <td>{c.nom_complet}{c.id === moi?.id ? ' (vous)' : ''}</td>
@@ -235,7 +279,6 @@ export function PageEquipe() {
         </form>
       </div>
 
-      <p className="aide">Code de cet appareil : <b>{appareil}</b>.</p>
     </section>
   );
 }

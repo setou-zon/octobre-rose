@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { tout } from './lib/db';
+import type { Compte } from './lib/auth';
 import { AuthProvider, useAuth } from './lib/auth';
 import { Ruban } from './components/Ruban';
 import { Installation } from './components/Installation';
@@ -25,10 +27,14 @@ const PAGES: Page[] = [
 const pageDepuisHash = () => window.location.hash.replace('#/', '') || 'accueil';
 
 function Coquille() {
-  const { etat, compte, appareil, deconnexion } = useAuth();
+  const { etat, compte, deconnexion } = useAuth();
   const [page, setPage] = useState(pageDepuisHash());
   const [menu, setMenu] = useState(false);
   const [enLigne, setEnLigne] = useState(navigator.onLine);
+  const [demandes, setDemandes] = useState(0);
+  useEffect(() => {
+    if (compte?.role === 'admin') tout<Compte>('comptes').then((c) => setDemandes(c.filter((x) => x.en_attente).length));
+  }, [compte, page]);
 
   useEffect(() => {
     const h = () => { setPage(pageDepuisHash()); setMenu(false); window.scrollTo({ top: 0 }); };
@@ -56,7 +62,7 @@ function Coquille() {
           <span className={`badge ${enLigne ? 'en-ligne' : 'hors-ligne'}`} title="Les fiches sont toujours enregistrées sur l’appareil">
             {enLigne ? 'En ligne' : 'Hors ligne · saisie possible'}
           </span>
-          <span className="utilisateur">{compte.nom_complet} · appareil {appareil}</span>
+          <span className="utilisateur">{compte.nom_complet}</span>
           <button className="lien" onClick={deconnexion}>Déconnexion</button>
         </div>
       </header>
@@ -65,12 +71,16 @@ function Coquille() {
           {visibles.map((p) => (
             <a key={p.id} href={`#/${p.id}`} className={p.id === courante.id ? 'actif' : ''} aria-current={p.id === courante.id ? 'page' : undefined}>
               <span className="num-outil">{p.outil ?? '•'}</span>{p.court}
+              {p.id === 'equipe' && demandes > 0 && <span className="pastille p-suspect" title="Demandes de compte à valider">{demandes}</span>}
             </a>
           ))}
           <Installation />
         </nav>
         {menu && <div className="voile" onClick={() => setMenu(false)} />}
         <main className="contenu">
+          {demandes > 0 && courante.id === 'accueil' && (
+            <a className="alerte attention alerte-demandes" href="#/equipe">{demandes} demande(s) de compte à valider → Équipe</a>
+          )}
           {courante.id !== 'accueil' && <h1>{courante.titre}{courante.outil && <span className="etiquette">Outil {courante.outil}</span>}</h1>}
           {courante.id === 'accueil' && <PageAccueil allerA={allerA} />}
           {courante.id === 'sensibilisation' && <PageSensibilisation />}

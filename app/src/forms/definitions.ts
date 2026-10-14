@@ -122,7 +122,7 @@ export const depistage: Formulaire = {
   sections: [
     {
       titre: 'A. Accueil et identification',
-      aide: 'Le code bénéficiaire (OR26-Site-Jour-Appareil+N°, ex. OR26-CBP-07-A015) est attribué automatiquement à l’enregistrement.',
+      aide: 'Le code bénéficiaire (OR26-Site-Jour-N°, ex. OR26-CBP-07-015) est attribué automatiquement à l’enregistrement.',
       champs: [
         { name: 'site_id', label: 'Site', type: 'site', required: true },
         { name: 'date_depistage', label: 'Date', type: 'date', required: true },

@@ -9,6 +9,10 @@ export type Compte = {
   role: Role;
   site_id: number | null;
   actif: boolean;
+  /** Compte créé par la personne elle-même, pas encore validé par un administrateur */
+  en_attente?: boolean;
+  telephone?: string;
+  site_souhaite?: number | null;
   sel: string;
   empreinte: string;
   created_at: string;
@@ -68,10 +72,11 @@ type Ctx = {
   etat: Etat;
   compte: Compte | null;
   sites: Site[];
-  appareil: string;
   connexion: (identifiant: string, motDePasse: string, rester: boolean) => Promise<void>;
   deconnexion: () => void;
-  initialiser: (p: { nom: string; identifiant: string; motDePasse: string; appareil: string }) => Promise<void>;
+  initialiser: (p: { nom: string; identifiant: string; motDePasse: string }) => Promise<void>;
+  inscrire: (p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) => Promise<Compte>;
+  validerSurPlace: (p: { demande: Compte; identifiantAdmin: string; motDePasseAdmin: string; site_id: number | null }) => Promise<void>;
   rafraichir: () => Promise<void>;
 };
 const AuthCtx = createContext<Ctx>(null as unknown as Ctx);
@@ -80,15 +85,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [etat, setEtat] = useState<Etat>('chargement');
   const [compte, setCompte] = useState<Compte | null>(null);
   const [sites, setSites] = useState<Site[]>(SITES_DEFAUT);
-  const [appareil, setAppareil] = useState('');
 
   const rafraichir = useCallback(async () => {
-    const [comptes, s, a] = await Promise.all([tout<Compte>('comptes'), metaLire<Site[]>('sites'), metaLire<string>('appareil')]);
+    const [comptes, s] = await Promise.all([tout<Compte>('comptes'), metaLire<Site[]>('sites')]);
     setSites(s?.length ? s : SITES_DEFAUT);
-    setAppareil(a ?? '');
-    if (!comptes.length) { setEtat('initialisation'); setCompte(null); return; }
+    if (!comptes.some((c) => c.role === 'admin')) { setEtat('initialisation'); setCompte(null); return; }
     const id = lireSession();
-    const c = comptes.find((x) => x.id === id && x.actif) ?? null;
+    const c = comptes.find((x) => x.id === id && x.actif && !x.en_attente) ?? null;
     setCompte(c);
     setEtat(c ? 'connecte' : 'deconnecte');
   }, []);
@@ -101,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // même temps de calcul que le compte existe ou non
     const essai = await deriver(motDePasse, c?.sel ?? '00'.repeat(16));
     if (!c || essai !== c.empreinte) throw new Error('Identifiant ou mot de passe incorrect.');
+    if (c.en_attente) throw new Error('Votre compte attend la validation de l’administrateur.');
     if (!c.actif) throw new Error('Ce compte est désactivé. Adressez-vous à l’administrateur.');
     ecrireSession(c.id, rester);
     setCompte(c); setEtat('connecte');
@@ -108,14 +112,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function deconnexion() { ecrireSession(null); setCompte(null); setEtat('deconnecte'); }
 
-  async function initialiser(p: { nom: string; identifiant: string; motDePasse: string; appareil: string }) {
-    if ((await tout('comptes')).length) throw new Error('Un administrateur existe déjà sur cet appareil.');
+  async function verifierAdmin(identifiant: string, motDePasse: string) {
+    const comptes = await tout<Compte>('comptes');
+    const a = comptes.find((x) => x.identifiant.toLowerCase() === identifiant.trim().toLowerCase() && x.role === 'admin' && x.actif && !x.en_attente);
+    const essai = await deriver(motDePasse, a?.sel ?? '00'.repeat(16));
+    if (!a || essai !== a.empreinte) throw new Error('Identifiants administrateur incorrects.');
+  }
+
+  async function inscrire(p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) {
+    const err = verifierRegles(p.motDePasse); if (err) throw new Error(err);
+    if (!p.nom.trim() || !p.identifiant.trim()) throw new Error('Nom et identifiant obligatoires.');
+    const comptes = await tout<Compte>('comptes');
+    if (comptes.some((c) => c.identifiant.toLowerCase() === p.identifiant.trim().toLowerCase())) throw new Error('Cet identifiant est déjà pris, choisissez-en un autre.');
+    const c: Compte = {
+      id: crypto.randomUUID(), identifiant: p.identifiant.trim(), nom_complet: p.nom.trim(), role: 'agent',
+      site_id: null, site_souhaite: p.site_id, telephone: p.telephone.trim(), actif: false, en_attente: true,
+      created_at: new Date().toISOString(), ...(await preparerMotDePasse(p.motDePasse)),
+    };
+    await ecrire('comptes', c);
+    return c;
+  }
+
+  async function validerSurPlace(p: { demande: Compte; identifiantAdmin: string; motDePasseAdmin: string; site_id: number | null }) {
+    await verifierAdmin(p.identifiantAdmin, p.motDePasseAdmin);
+    await ecrire('comptes', { ...p.demande, actif: true, en_attente: false, site_id: p.site_id });
+  }
+
+  async function initialiser(p: { nom: string; identifiant: string; motDePasse: string }) {
+    if ((await tout<Compte>('comptes')).some((c) => c.role === 'admin')) throw new Error('Un administrateur existe déjà sur cet appareil.');
     const err = verifierRegles(p.motDePasse); if (err) throw new Error(err);
     const c: Compte = {
       id: crypto.randomUUID(), identifiant: p.identifiant.trim(), nom_complet: p.nom.trim(), role: 'admin',
       site_id: null, actif: true, created_at: new Date().toISOString(), ...(await preparerMotDePasse(p.motDePasse)),
     };
-    await metaEcrire('appareil', p.appareil.trim().toUpperCase());
     if (!(await metaLire('sites'))) await metaEcrire('sites', SITES_DEFAUT);
     await ecrire('comptes', c);
     ecrireSession(c.id);
@@ -123,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthCtx.Provider value={{ etat, compte, sites, appareil, connexion, deconnexion, initialiser, rafraichir }}>
+    <AuthCtx.Provider value={{ etat, compte, sites, connexion, deconnexion, initialiser, inscrire, validerSurPlace, rafraichir }}>
       {children}
     </AuthCtx.Provider>
   );

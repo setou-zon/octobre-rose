@@ -17,18 +17,17 @@ export async function exporterConfiguration() {
   telecharger(`octobre-rose_configuration_${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(config), 'application/json');
 }
 
-export async function importerConfiguration(texte: string, appareil?: string) {
+export async function importerConfiguration(texte: string) {
   let c: { format?: string; comptes?: Compte[]; sites?: Site[]; cibles?: Record<string, number | null> };
   try { c = JSON.parse(texte); } catch { throw new Error('Ce fichier n’est pas un fichier de configuration.'); }
   if (c.format !== FORMAT_CONFIG || !Array.isArray(c.comptes)) throw new Error('Ce fichier n’est pas une configuration Octobre Rose 2026.');
   const comptes = c.comptes.filter((x) => x && x.id && x.identifiant && x.empreinte && x.sel);
   if (!comptes.some((x) => x.role === 'admin' && x.actif)) throw new Error('La configuration ne contient aucun administrateur actif.');
-  // fusion : les comptes du fichier remplacent ceux de même identifiant interne
-  await ecrireLot('comptes', comptes);
+  // fusion : les comptes du fichier remplacent ceux de même identifiant interne ;
+  // une demande locale en attente n'écrase pas un compte validé ailleurs
+  const locaux = new Map((await tout<Compte>('comptes')).map((x) => [x.id, x]));
+  await ecrireLot('comptes', comptes.filter((x) => !(x.en_attente && locaux.get(x.id) && !locaux.get(x.id)!.en_attente)));
   if (Array.isArray(c.sites) && c.sites.length) await metaEcrire('sites', c.sites);
   if (c.cibles) await metaEcrire('cibles', c.cibles);
-  if (appareil) await metaEcrire('appareil', appareil.trim().toUpperCase());
   return comptes.length;
 }
-
-export const CODE_APPAREIL = /^[A-Z][A-Z0-9]?$/;

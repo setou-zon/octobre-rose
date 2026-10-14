@@ -7,7 +7,7 @@ Application web installable (PWA) pour saisir les **8 outils de collecte** de la
 - **Fonctionne sans internet** : après la première ouverture, l'application s'ouvre et enregistre les fiches hors connexion.
 - **S'installe** sur téléphone et ordinateur comme une application (bouton « Installer l'application » dans le menu ; sur iPhone : Safari → Partager → Sur l'écran d'accueil).
 - **Aucun serveur** : les données restent sur l'appareil. Elles sont regroupées par fichiers (voir plus bas).
-- **Accès par compte** : identifiant et mot de passe, comptes créés par l'administrateur.
+- **Accès par compte** : chacun crée son compte, l'administrateur le valide.
 
 | Outil | Écran |
 | --- | --- |
@@ -22,11 +22,13 @@ Application web installable (PWA) pour saisir les **8 outils de collecte** de la
 
 ## Mise en route
 
-1. **Coordination** – ouvrir l'adresse, choisir *Créer le compte administrateur*, donner un code appareil (ex. `A`).
-2. Dans **Équipe** : créer un compte par agent (site de rattachement, mot de passe), ajouter les sites communautaires, puis **Exporter la configuration**.
-3. **Chaque autre appareil** – ouvrir l'adresse, choisir *Installer la configuration de la coordination*, sélectionner le fichier reçu et donner un **code appareil différent** (B, C, D…). Les agents s'y connectent avec leurs identifiants.
+1. **Coordination** – ouvrir l'adresse et choisir *Je suis l'administrateur : créer mon compte*. Dans **Équipe**, ajouter les sites communautaires puis **Exporter la configuration**.
+2. **Chaque autre téléphone** – ouvrir l'adresse, choisir *Installer la configuration de la coordination* et sélectionner le fichier reçu.
+3. **Chaque agent crée son compte** (bouton *Créer mon compte* sur l'écran de connexion). Le compte est actif après validation par un administrateur :
+   - sur place, l'administrateur saisit ses identifiants sur l'écran d'attente du téléphone ;
+   - ou dans **Équipe → Demandes de compte à valider** (en choisissant le site de l'agent).
 
-Le code appareil entre dans le code bénéficiaire (`OR26-CBP-07-A015` = Clinique Blaise Pascal, 7 octobre, appareil A, 15e femme) : deux appareils ne peuvent donc jamais donner le même code.
+Le code bénéficiaire suit le format de la fiche papier : `OR26-CBP-07-015` (Clinique Blaise Pascal, 7 octobre, 15e femme). Si deux téléphones ont donné le même code le même jour, l'import chez la coordination renumérote la fiche reçue (`OR26-CBP-07-015B`) et l'affiche pour correction sur la fiche papier.
 
 ## Regrouper les données
 
@@ -36,7 +38,7 @@ Le code appareil entre dans le code bénéficiaire (`OR26-CBP-07-A015` = Cliniqu
 
 ## Confidentialité
 
-- Mots de passe chiffrés (PBKDF2), session limitée à 8 heures.
+- Mots de passe chiffrés (PBKDF2), session limitée à 8 heures ; un compte non validé ne peut pas se connecter.
 - Un agent rattaché à un site ne voit que les fiches nominatives de ce site.
 - Le registre, les exports Excel standard et les synthèses ne contiennent ni nom ni téléphone ; seul l'administrateur peut exporter les fiches nominatives.
 - Les données sont stockées dans le navigateur de l'appareil : protégez les appareils par un code de verrouillage et ne videz pas les données du navigateur avant d'avoir créé un fichier d'envoi.
