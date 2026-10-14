@@ -33,8 +33,6 @@ function useDonnees() {
 // ---------------------------------------------------------------------------
 // Tableau de bord
 // ---------------------------------------------------------------------------
-const DEBUT = '2026-10-07';
-const FIN = '2026-10-11';
 
 export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
   const { compte, sites } = useAuth();
@@ -46,14 +44,11 @@ export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
   const tx = taux(d);
   const get = (k: string) => ind.find((i) => i.cle === k)!;
   const sensibilises = get('sensibilises_femmes').realise + get('sensibilises_hommes').realise;
-  const aujourd = aujourdhui();
-  const jourCampagne = aujourd < DEBUT ? null : aujourd > FIN ? 'terminee' : Math.round((new Date(aujourd).getTime() - new Date(DEBUT).getTime()) / 86400000) + 1;
 
-  // Femmes accueillies par jour de campagne (7 → 11 octobre) + jours hors période s'il y en a
+  // Femmes accueillies par jour (jours où des fiches existent, les 10 plus récents)
   const parJour = new Map<string, number>();
-  for (let j = 7; j <= 11; j++) parJour.set(`2026-10-${String(j).padStart(2, '0')}`, 0);
   for (const x of d.depistages) parJour.set(String(x.date_depistage), (parJour.get(String(x.date_depistage)) ?? 0) + 1);
-  const jours = [...parJour.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const jours = [...parJour.entries()].filter(([j]) => j && j !== 'undefined').sort(([a], [b]) => a.localeCompare(b)).slice(-10);
   const maxJour = Math.max(1, ...jours.map(([, v]) => v));
 
   const age = sensibilisationParAge(d.seances_sensibilisation);
@@ -85,8 +80,7 @@ export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
           <p className="banniere-sur">Campagne de lutte contre les cancers féminins · ADG</p>
           <h2 className="banniere-titre">Octobre Rose 2026</h2>
           <p className="banniere-texte">
-            Dépistage du sein et du col de l’utérus du 7 au 11 octobre 2026
-            {jourCampagne === 'terminee' ? ' · campagne terminée' : jourCampagne ? ` · jour ${jourCampagne} sur 5` : ''}
+            Sensibilisation et dépistage des cancers du sein et du col de l’utérus
           </p>
         </div>
         <div className="banniere-actions">
@@ -116,7 +110,8 @@ export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
       <div className="deux-colonnes">
         <figure className="carte graphique">
           <figcaption><h3>Femmes accueillies par jour</h3></figcaption>
-          <div className="colonnes-graph" role="img" aria-label={jours.map(([j, v]) => `${j} : ${v}`).join(', ')}>
+          {jours.length === 0 && <p className="vide">Pas encore de dépistage.</p>}
+          {jours.length > 0 && <div className="colonnes-graph" role="img" aria-label={jours.map(([j, v]) => `${j} : ${v}`).join(', ')}>
             {jours.map(([j, v]) => (
               <div className="col-graph" key={j} title={`${new Date(j + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} : ${v} femme(s)`}>
                 <div className="col-zone">
@@ -126,7 +121,7 @@ export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
                 <span className="col-jour">{new Date(j + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric' })}</span>
               </div>
             ))}
-          </div>
+          </div>}
         </figure>
 
         <figure className="carte graphique">

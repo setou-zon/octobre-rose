@@ -64,7 +64,7 @@ export const seance: Formulaire = {
             ['col_hpv', 'Cancer du col de l’utérus et HPV'],
             ['vaccination_hpv', 'Vaccination contre le HPV'],
             ['depistage_precoce', 'Importance du dépistage précoce'],
-            ['lieux_dates', 'Lieux et dates du dépistage (7–11 octobre)'],
+            ['lieux_dates', 'Lieux et dates du dépistage'],
             ['tabous', 'Lutte contre les tabous et la stigmatisation'],
           ]) },
       ],
