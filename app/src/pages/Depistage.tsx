@@ -1,44 +1,37 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LIBELLES, depistage, reference } from '../forms/definitions';
+import { depistage, reference } from '../forms/definitions';
 import type { Valeurs } from '../forms/types';
 import { FormRenderer } from '../components/FormRenderer';
-import { Tableau, dateFr } from '../components/PageListe';
-import { exporterCsv } from '../lib/data';
-import { messageErreur, supabase } from '../lib/supabase';
-import { useSession } from '../lib/session';
-
-const lib = (k: string, v: unknown) => LIBELLES[k]?.[String(v)] ?? String(v ?? '');
-const aujourdhui = () => new Date().toISOString().slice(0, 10);
+import { Tableau } from '../components/Tableau';
+import { useAuth } from '../lib/auth';
+import type { Fiche } from '../lib/db';
+import { aujourdhui, dateFr, lib } from '../lib/format';
+import { registre } from '../lib/indicateurs';
+import { exporterCsv, liste, supprimer, toutesLesDonnees } from '../lib/store';
 
 // ---------------------------------------------------------------------------
 // Outil 2 – Nouvelle fiche individuelle
 // ---------------------------------------------------------------------------
 export function PageNouvelleFiche({ allerA }: { allerA: (p: string) => void }) {
   const [cle, setCle] = useState(0);
-  const [resultat, setResultat] = useState<Valeurs | 'horsligne' | null>(null);
+  const [resultat, setResultat] = useState<Valeurs | null>(null);
   const [referer, setReferer] = useState<Valeurs | null>(null);
 
-  if (referer) {
-    return <FormulaireReference depistage={referer} onFini={() => { setReferer(null); setResultat(null); setCle((k) => k + 1); }} />;
-  }
+  const recommencer = () => { setReferer(null); setResultat(null); setCle((k) => k + 1); window.scrollTo({ top: 0 }); };
+
+  if (referer) return <FormulaireReference depistage={referer} onFini={recommencer} />;
 
   if (resultat) {
-    const doitReferer = resultat !== 'horsligne' && ['ref_sein', 'ref_col', 'ref_deux'].includes(String(resultat.decision_finale));
+    const doitReferer = ['ref_sein', 'ref_col', 'ref_deux'].includes(String(resultat.decision_finale));
     return (
       <section className="confirmation">
-        {resultat === 'horsligne' ? (
-          <div className="alerte attention">Pas de réseau : la fiche est gardée sur cet appareil et sera envoyée automatiquement. Le code bénéficiaire sera attribué à l’envoi.</div>
-        ) : (
-          <>
-            <p>Fiche enregistrée. Code bénéficiaire :</p>
-            <p className="code-beneficiaire">{String(resultat.code)}</p>
-            <p className="aide">Inscrivez ce code sur la fiche papier et sur le registre.</p>
-          </>
-        )}
+        <p>Fiche enregistrée sur cet appareil. Code bénéficiaire :</p>
+        <p className="code-beneficiaire">{String(resultat.code)}</p>
+        <p className="aide">Inscrivez ce code sur la fiche papier et sur le registre.</p>
         <div className="actions-fiche">
-          {doitReferer && <button className="btn principal" onClick={() => setReferer(resultat as Valeurs)}>Remplir la fiche de référence</button>}
-          <button className={`btn ${doitReferer ? 'secondaire' : 'principal'}`} onClick={() => { setResultat(null); setCle((k) => k + 1); }}>Nouvelle bénéficiaire</button>
-          <button className="btn secondaire" onClick={() => allerA('registre')}>Voir le registre du jour</button>
+          {doitReferer && <button className="btn principal" onClick={() => setReferer(resultat)}>Remplir la fiche de référence</button>}
+          <button className={`btn ${doitReferer ? 'secondaire' : 'principal'}`} onClick={recommencer}>Nouvelle bénéficiaire</button>
+          <button className="btn secondaire" onClick={() => allerA('registre')}>Voir le registre</button>
         </div>
       </section>
     );
@@ -46,8 +39,8 @@ export function PageNouvelleFiche({ allerA }: { allerA: (p: string) => void }) {
 
   return (
     <section>
-      <p className="intro">Outil 2 – une fiche par femme, complétée à chaque poste (accueil, sein, col, conseil).</p>
-      <FormRenderer key={cle} form={depistage} onEnregistre={(l) => { setResultat(l ?? 'horsligne'); window.scrollTo({ top: 0 }); }} />
+      <p className="intro">Outil 2 – une fiche par femme, complétée à chaque poste (accueil, sein, col, conseil). Fonctionne sans internet.</p>
+      <FormRenderer key={cle} form={depistage} onEnregistre={(l) => { setResultat(l); window.scrollTo({ top: 0 }); }} />
     </section>
   );
 }
@@ -55,31 +48,28 @@ export function PageNouvelleFiche({ allerA }: { allerA: (p: string) => void }) {
 // ---------------------------------------------------------------------------
 // Outil 3 – Registre journalier (sans nom), avec ouverture de la fiche
 // ---------------------------------------------------------------------------
+type LigneRegistre = ReturnType<typeof registre>[number];
+
 export function PageRegistre() {
-  const { sites, profil } = useSession();
-  const [site, setSite] = useState<string>(profil?.site_id ? String(profil.site_id) : '');
+  const { sites, compte } = useAuth();
+  const [site, setSite] = useState<string>(compte?.site_id ? String(compte.site_id) : '');
   const [date, setDate] = useState(aujourdhui());
-  const [lignes, setLignes] = useState<Valeurs[]>([]);
-  const [erreur, setErreur] = useState('');
-  const [fiche, setFiche] = useState<Valeurs | null>(null);
-  const [referer, setReferer] = useState<Valeurs | null>(null);
+  const [lignes, setLignes] = useState<LigneRegistre[]>([]);
+  const [fiche, setFiche] = useState<Fiche | null>(null);
+  const [referer, setReferer] = useState<Fiche | null>(null);
 
   const charger = useCallback(async () => {
-    let q = supabase.from('v_registre_depistage').select('*');
-    if (site) q = q.eq('site_id', Number(site));
-    if (date) q = q.eq('date_depistage', date);
-    const { data, error } = await q.order('date_depistage', { ascending: false }).order('site_code').order('numero_ordre').limit(2000);
-    if (error) setErreur(messageErreur(error)); else { setErreur(''); setLignes((data ?? []) as Valeurs[]); }
-  }, [site, date]);
-
+    const d = await toutesLesDonnees(compte);
+    setLignes(registre(d, sites).filter((l) => (!site || String(l.site_id) === site) && (!date || l.date === date)));
+  }, [site, date, compte, sites]);
   useEffect(() => { charger(); }, [charger]);
 
   async function ouvrir(l: Valeurs) {
-    const { data, error } = await supabase.from('depistages').select('*').eq('id', l.id).single();
-    if (error) setErreur(messageErreur(error)); else setFiche(data as Valeurs);
+    const f = (await liste('depistages', compte)).find((x) => x.id === l.id);
+    if (f) setFiche(f);
   }
 
-  if (referer) return <FormulaireReference depistage={referer} onFini={() => { setReferer(null); charger(); }} />;
+  if (referer) return <FormulaireReference depistage={referer} onFini={() => { setReferer(null); setFiche(null); charger(); }} />;
 
   if (fiche) {
     return (
@@ -88,38 +78,43 @@ export function PageRegistre() {
         <div className="barre">
           <button className="btn secondaire" onClick={() => setReferer(fiche)}>Référer cette bénéficiaire</button>
         </div>
-        <FormRenderer form={depistage} initial={fiche} id={String(fiche.id)}
-          onAnnuler={() => setFiche(null)} onEnregistre={() => { setFiche(null); charger(); }} />
+        <FormRenderer form={depistage} initial={fiche} id={fiche.id}
+          onAnnuler={() => setFiche(null)}
+          onSupprimer={compte?.role === 'admin' ? async () => {
+            if (!confirm(`Supprimer la fiche ${fiche.code} et ses références ?`)) return;
+            await supprimer('depistages', fiche.id, compte); setFiche(null); charger();
+          } : undefined}
+          onEnregistre={() => { setFiche(null); charger(); }} />
       </section>
     );
   }
 
-  const nb = (f: (l: Valeurs) => boolean) => lignes.filter(f).length;
+  const nb = (f: (l: LigneRegistre) => boolean) => lignes.filter(f).length;
+  const oN = (v: boolean | null) => (v == null ? '–' : v ? 'O' : 'Nn');
   return (
     <section>
       <p className="intro">Outil 3 – une ligne par femme, sans nom. Touchez une ligne pour ouvrir ou compléter la fiche.</p>
-      {erreur && <div className="alerte erreur">{erreur}</div>}
       <div className="filtres">
         <label>Site
-          <select value={site} onChange={(e) => setSite(e.target.value)}>
+          <select value={site} onChange={(e) => setSite(e.target.value)} disabled={compte?.role !== 'admin' && compte?.site_id != null}>
             <option value="">Tous les sites</option>
             {sites.map((s) => <option key={s.id} value={s.id}>{s.nom}</option>)}
           </select>
         </label>
         <label>Date <input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <button className="btn secondaire" onClick={() => setDate('')}>Toutes les dates</button>
-        <button className="btn secondaire" disabled={!lignes.length} onClick={() => exporterCsv('outil3_registre', lignes)}>Exporter (CSV)</button>
+        <button className="btn secondaire" disabled={!lignes.length} onClick={() => exporterCsv('outil3_registre', lignes as unknown as Valeurs[], ['id', 'site_id'])}>Télécharger (CSV)</button>
       </div>
       <p className="legende">Codes : <b>N</b> normal / négatif · <b>A</b> anomalie / positif · <b>S</b> suspect · <b>NF</b> non fait</p>
-      <Tableau lignes={lignes} onClic={ouvrir} vide="Aucune bénéficiaire enregistrée pour ce filtre."
+      <Tableau lignes={lignes as unknown as Valeurs[]} onClic={ouvrir} vide="Aucune bénéficiaire enregistrée pour ce filtre."
         colonnes={[
           { titre: 'Code', rendu: (l) => <span className="mono">{String(l.code)}</span> },
           { titre: 'Âge', num: true, rendu: (l) => String(l.age) },
-          { titre: '1er sein', rendu: (l) => (l.premier_depistage_sein == null ? '–' : l.premier_depistage_sein ? 'O' : 'Nn') },
+          { titre: '1er sein', rendu: (l) => oN(l.premier_sein as boolean | null) },
           { titre: 'Seins', rendu: (l) => <Pastille v={String(l.examen_seins)} /> },
           { titre: 'Examen compl.', rendu: (l) => String(l.examen_complementaire || '–') },
-          { titre: '1er col', rendu: (l) => (l.premier_depistage_col == null ? '–' : l.premier_depistage_col ? 'O' : 'Nn') },
-          { titre: 'Méthode col', rendu: (l) => String(l.methode_col ?? 'NF') },
+          { titre: '1er col', rendu: (l) => oN(l.premier_col as boolean | null) },
+          { titre: 'Méthode col', rendu: (l) => String(l.methode_col) },
           { titre: 'Résultat col', rendu: (l) => <Pastille v={String(l.resultat_col ?? '–')} /> },
           { titre: 'Traitement', rendu: (l) => String(l.traitement ?? '–') },
           { titre: 'Référée', rendu: (l) => String(l.referee ?? '–') },
@@ -163,31 +158,38 @@ function FormulaireReference({ depistage: d, onFini }: { depistage: Valeurs; onF
 // ---------------------------------------------------------------------------
 // Outil 5 – Suivi des références (+ impression de la fiche)
 // ---------------------------------------------------------------------------
+type Ref = Fiche & { dep?: Fiche };
+
 export function PageReferences() {
-  const [lignes, setLignes] = useState<Valeurs[]>([]);
-  const [erreur, setErreur] = useState('');
-  const [edition, setEdition] = useState<Valeurs | null>(null);
-  const [impression, setImpression] = useState<Valeurs | null>(null);
+  const { compte, sites } = useAuth();
+  const [lignes, setLignes] = useState<Ref[]>([]);
+  const [edition, setEdition] = useState<Ref | null>(null);
+  const [impression, setImpression] = useState<Ref | null>(null);
 
   const charger = useCallback(async () => {
-    const { data, error } = await supabase.from('references_cas')
-      .select('*, depistages(code, nom_prenoms, age, telephone, sites(nom))')
-      .order('date_reference', { ascending: false });
-    if (error) setErreur(messageErreur(error)); else setLignes((data ?? []) as Valeurs[]);
-  }, []);
+    const [refs, deps] = await Promise.all([liste('references_cas', compte), liste('depistages', compte)]);
+    const parId = new Map(deps.map((d) => [d.id, d]));
+    setLignes(refs.map((r) => ({ ...r, dep: parId.get(String(r.depistage_id)) }) as Ref)
+      .sort((a, b) => String(b.date_reference).localeCompare(String(a.date_reference))));
+  }, [compte]);
   useEffect(() => { charger(); }, [charger]);
 
-  if (impression) return <FicheReferenceImprimable r={impression} onRetour={() => setImpression(null)} />;
+  if (impression) return <FicheReferenceImprimable r={impression} site={sites.find((s) => s.id === impression.dep?.site_id)?.nom ?? ''} onRetour={() => setImpression(null)} />;
 
   if (edition) {
-    const d = edition.depistages as Valeurs | null;
+    const { dep, ...ref } = edition;
     return (
       <section>
-        <h2>Référence {String(edition.numero)} – {String(d?.code ?? '')}</h2>
-        <p className="intro">{String(d?.nom_prenoms ?? '')}{d?.telephone ? ` · ${d.telephone}` : ''}</p>
+        <h2>Référence {String(ref.numero)} – {String(dep?.code ?? '')}</h2>
+        <p className="intro">{String(dep?.nom_prenoms ?? '')}{dep?.telephone ? ` · ${dep.telephone}` : ''}</p>
         <div className="barre"><button className="btn secondaire" onClick={() => setImpression(edition)}>Imprimer la fiche</button></div>
-        <FormRenderer form={reference} initial={edition} id={String(edition.id)}
-          onAnnuler={() => setEdition(null)} onEnregistre={() => { setEdition(null); charger(); }} />
+        <FormRenderer form={reference} initial={ref} id={ref.id}
+          onAnnuler={() => setEdition(null)}
+          onSupprimer={compte?.role === 'admin' ? async () => {
+            if (!confirm('Supprimer cette référence ?')) return;
+            await supprimer('references_cas', ref.id, compte); setEdition(null); charger();
+          } : undefined}
+          onEnregistre={() => { setEdition(null); charger(); }} />
       </section>
     );
   }
@@ -199,16 +201,16 @@ export function PageReferences() {
   };
   return (
     <section>
-      <p className="intro">Outils 4 et 5 – chaque femme référée est suivie jusqu’à sa réception par la structure. Les nouvelles références se créent depuis la fiche de la bénéficiaire.</p>
-      {erreur && <div className="alerte erreur">{erreur}</div>}
+      <p className="intro">Outils 4 et 5 – chaque femme référée est suivie jusqu’à sa réception par la structure. Les nouvelles références se créent depuis la fiche de la bénéficiaire (registre).</p>
       <div className="barre">
         <span className="compteur">{lignes.length} référence(s) · {recues} reçue(s) · taux de références effectives : <b>{lignes.length ? Math.round((100 * recues) / lignes.length) : 0} %</b></span>
-        <button className="btn secondaire" disabled={!lignes.length} onClick={() => exporterCsv('outil5_references', lignes.map(({ depistages, ...r }) => ({ ...r, code: (depistages as Valeurs)?.code })))}>Exporter (CSV)</button>
+        <button className="btn secondaire" disabled={!lignes.length}
+          onClick={() => exporterCsv('outil5_references', lignes.map(({ dep, ...r }) => ({ code_beneficiaire: dep?.code, ...r })), ['supprime', 'depistage_id'])}>Télécharger (CSV)</button>
       </div>
-      <Tableau lignes={lignes} onClic={setEdition} vide="Aucune référence pour le moment."
+      <Tableau lignes={lignes} onClic={(l) => setEdition(l as Ref)} vide="Aucune référence pour le moment."
         colonnes={[
           { titre: 'N°', rendu: (l) => <span className="mono">{String(l.numero)}</span> },
-          { titre: 'Code', rendu: (l) => <span className="mono">{String((l.depistages as Valeurs)?.code ?? '')}</span> },
+          { titre: 'Code', rendu: (l) => <span className="mono">{String((l.dep as Fiche | undefined)?.code ?? '')}</span> },
           { titre: 'Date', rendu: (l) => dateFr(l.date_reference) },
           { titre: 'Destination', rendu: (l) => String(l.structure_destination) },
           { titre: 'Urgence', rendu: (l) => lib('urgence', l.urgence).split(' (')[0] },
@@ -220,9 +222,8 @@ export function PageReferences() {
   );
 }
 
-function FicheReferenceImprimable({ r, onRetour }: { r: Valeurs; onRetour: () => void }) {
-  const d = (r.depistages ?? {}) as Valeurs;
-  const site = (d.sites as Valeurs | undefined)?.nom;
+function FicheReferenceImprimable({ r, site, onRetour }: { r: Ref; site: string; onRetour: () => void }) {
+  const d = (r.dep ?? {}) as Valeurs;
   const liste = (x: unknown) => (Array.isArray(x) ? x.join(', ') : '');
   return (
     <section className="imprimable">
@@ -234,7 +235,7 @@ function FicheReferenceImprimable({ r, onRetour }: { r: Valeurs; onRetour: () =>
       <p>N° de référence : <b>{String(r.numero)}</b> · Code bénéficiaire : <b>{String(d.code ?? '')}</b></p>
       <h3>Volet 1 – Référence</h3>
       <table className="fiche-imp"><tbody>
-        <tr><th>Structure qui réfère</th><td>{String(site ?? '')}</td></tr>
+        <tr><th>Structure qui réfère</th><td>{site}</td></tr>
         <tr><th>Date</th><td>{dateFr(r.date_reference)}</td></tr>
         <tr><th>Patiente</th><td>{String(d.nom_prenoms ?? '')}, {String(d.age ?? '')} ans · {String(d.telephone ?? '')}</td></tr>
         <tr><th>Structure de destination</th><td>{String(r.structure_destination)}</td></tr>

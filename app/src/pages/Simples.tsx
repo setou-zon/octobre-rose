@@ -1,8 +1,7 @@
 import { useState } from 'react';
-import { LIBELLES, leader, media, seance, support } from '../forms/definitions';
-import { PageListe, dateFr } from '../components/PageListe';
-
-const lib = (k: string, v: unknown) => LIBELLES[k]?.[String(v)] ?? String(v ?? '');
+import { leader, media, seance, support } from '../forms/definitions';
+import { PageListe } from '../components/PageListe';
+import { dateFr, lib } from '../lib/format';
 
 export function PageSensibilisation() {
   return (
@@ -31,7 +30,7 @@ export function PageCommunication() {
         ))}
       </div>
       {onglet === 'supports' && (
-        <PageListe key="s" form={support} ordre="created_at" libelleNouveau="Nouveau support" nomExport="outil6a_supports"
+        <PageListe key="s" form={support} ordre="updated_at" libelleNouveau="Nouveau support" nomExport="outil6a_supports"
           colonnes={[
             { titre: 'Type', rendu: (l) => (l.type_support === 'autre' ? String(l.type_autre ?? 'Autre') : lib('type_support', l.type_support)) },
             { titre: 'Produits', num: true, rendu: (l) => String(l.qte_produite ?? 0) },
@@ -52,7 +51,7 @@ export function PageCommunication() {
           ]} />
       )}
       {onglet === 'leaders' && (
-        <PageListe key="l" form={leader} ordre="created_at" libelleNouveau="Nouveau leader" nomExport="outil6c_leaders"
+        <PageListe key="l" form={leader} ordre="updated_at" libelleNouveau="Nouveau leader" nomExport="outil6c_leaders"
           colonnes={[
             { titre: 'Nom', rendu: (l) => String(l.nom ?? '') },
             { titre: 'Catégorie', rendu: (l) => lib('categorie', l.categorie) },

@@ -17,7 +17,7 @@ export const LIBELLES: Record<string, Record<string, string>> = {
   type_support: { affiche: 'Affiches', banderole: 'Banderoles', depliant: 'Dépliants / flyers', capsule_video: 'Capsules vidéo', message_whatsapp: 'Messages WhatsApp', publication_reseaux: 'Publications réseaux sociaux', autre: 'Autre' },
   type_media: { radio: 'Radio', television: 'Télévision', presse: 'Presse', en_ligne: 'En ligne' },
   categorie: { religieux: 'Religieux', coutumier: 'Coutumier', communautaire: 'Communautaire', association: 'Association', influenceur: 'Influenceur' },
-  role: { agent: 'Agent de saisie', responsable_site: 'Responsable de site', coordination: 'Coordination ADG' },
+  role: { agent: 'Agent de saisie', admin: 'Administrateur (coordination)' },
 };
 const opts = (k: string) => Object.entries(LIBELLES[k]).map(([v, l]) => ({ v, l }));
 
@@ -104,10 +104,12 @@ const colOk = (v: Valeurs) => consent(v) && v.col_realise === true;
 export const depistage: Formulaire = {
   table: 'depistages',
   titre: 'Fiche individuelle de dépistage',
-  defaut: () => ({ date_depistage: aujourdhui(), sources_info: [], plaintes: [], cat_sein: [], conseils: [], sein_examine: false, col_realise: false }),
+  defaut: () => ({ date_depistage: aujourdhui(), sources_info: [], plaintes: [], cat_sein: [], conseils: [] }),
   verifier: (v) => {
     const e: string[] = [];
     if (v.consentement !== true && (v.sein_examine || v.col_realise)) e.push('Aucun examen sans consentement éclairé.');
+    if (consent(v) && v.sein_examine == null) e.push('Indiquez si l’examen clinique des seins a été réalisé.');
+    if (consent(v) && v.col_realise == null) e.push('Indiquez si le dépistage du col a été réalisé.');
     if (v.sein_examine && !v.conclusion_sein) e.push('Indiquez la conclusion de l’examen des seins.');
     if (v.col_realise && !v.resultat_col) e.push('Indiquez le résultat du dépistage du col.');
     if (v.col_realise === false && consent(v) && !v.motif_non_col) e.push('Indiquez pourquoi le dépistage du col n’a pas été fait.');
@@ -120,7 +122,7 @@ export const depistage: Formulaire = {
   sections: [
     {
       titre: 'A. Accueil et identification',
-      aide: 'Le code bénéficiaire (OR26-Site-Jour-N°) est attribué automatiquement à l’enregistrement.',
+      aide: 'Le code bénéficiaire (OR26-Site-Jour-Appareil+N°, ex. OR26-CBP-07-A015) est attribué automatiquement à l’enregistrement.',
       champs: [
         { name: 'site_id', label: 'Site', type: 'site', required: true },
         { name: 'date_depistage', label: 'Date', type: 'date', required: true },

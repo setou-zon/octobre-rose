@@ -1,32 +1,32 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import type { Formulaire, Valeurs } from '../forms/types';
-import { exporterCsv } from '../lib/data';
-import { messageErreur, supabase } from '../lib/supabase';
+import { useAuth } from '../lib/auth';
+import type { Fiche, Table } from '../lib/db';
+import { exporterCsv, liste, supprimer } from '../lib/store';
 import { FormRenderer } from './FormRenderer';
-
-export type Colonne = { titre: string; rendu: (l: Valeurs) => ReactNode; num?: boolean };
+import { Tableau, type Colonne } from './Tableau';
 
 type Props = {
   form: Formulaire;
   colonnes: Colonne[];
   ordre: string;
-  select?: string;
   intro?: ReactNode;
   libelleNouveau: string;
   nomExport: string;
 };
 
 /** Liste + saisie / modification d'une table simple */
-export function PageListe({ form, colonnes, ordre, select = '*', intro, libelleNouveau, nomExport }: Props) {
-  const [lignes, setLignes] = useState<Valeurs[]>([]);
-  const [edition, setEdition] = useState<Valeurs | 'nouveau' | null>(null);
-  const [erreur, setErreur] = useState('');
+export function PageListe({ form, colonnes, ordre, intro, libelleNouveau, nomExport }: Props) {
+  const { compte } = useAuth();
+  const [lignes, setLignes] = useState<Fiche[]>([]);
+  const [edition, setEdition] = useState<Fiche | 'nouveau' | null>(null);
   const [info, setInfo] = useState('');
+  const table = form.table as Table;
 
   const charger = useCallback(async () => {
-    const { data, error } = await supabase.from(form.table).select(select).order(ordre, { ascending: false }).limit(1000);
-    if (error) setErreur(messageErreur(error)); else setLignes((data ?? []) as unknown as Valeurs[]);
-  }, [form.table, select, ordre]);
+    const l = await liste(table, compte);
+    setLignes(l.sort((a, b) => String(b[ordre] ?? '').localeCompare(String(a[ordre] ?? ''))));
+  }, [table, compte, ordre]);
 
   useEffect(() => { charger(); }, [charger]);
 
@@ -35,12 +35,13 @@ export function PageListe({ form, colonnes, ordre, select = '*', intro, libelleN
     return (
       <section>
         <h2>{existant ? `Modifier – ${form.titre}` : libelleNouveau}</h2>
-        <FormRenderer form={form} initial={existant} id={existant?.id as string | undefined}
+        <FormRenderer form={form} initial={existant} id={existant?.id}
           onAnnuler={() => setEdition(null)}
-          onEnregistre={(l) => {
-            setInfo(l ? 'Fiche enregistrée.' : 'Pas de réseau : fiche gardée sur cet appareil, elle sera envoyée automatiquement.');
-            setEdition(null); charger();
-          }} />
+          onSupprimer={existant && compte?.role === 'admin' ? async () => {
+            if (!confirm('Supprimer définitivement cette fiche ?')) return;
+            await supprimer(table, existant.id, compte); setInfo('Fiche supprimée.'); setEdition(null); charger();
+          } : undefined}
+          onEnregistre={() => { setInfo('Fiche enregistrée sur cet appareil.'); setEdition(null); charger(); }} />
       </section>
     );
   }
@@ -49,36 +50,12 @@ export function PageListe({ form, colonnes, ordre, select = '*', intro, libelleN
     <section>
       {intro}
       {info && <div className="alerte succes" role="status">{info}</div>}
-      {erreur && <div className="alerte erreur" role="alert">{erreur}</div>}
       <div className="barre">
         <button className="btn principal" onClick={() => { setInfo(''); setEdition('nouveau'); }}>+ {libelleNouveau}</button>
-        <button className="btn secondaire" disabled={!lignes.length} onClick={() => exporterCsv(nomExport, lignes)}>Exporter (CSV)</button>
+        <button className="btn secondaire" disabled={!lignes.length} onClick={() => exporterCsv(nomExport, lignes as Valeurs[], ['supprime'])}>Télécharger (CSV)</button>
         <span className="compteur">{lignes.length} fiche{lignes.length > 1 ? 's' : ''}</span>
       </div>
-      <Tableau colonnes={colonnes} lignes={lignes} onClic={(l) => { setInfo(''); setEdition(l); }} />
+      <Tableau colonnes={colonnes} lignes={lignes} onClic={(l) => { setInfo(''); setEdition(l as Fiche); }} />
     </section>
   );
 }
-
-export function Tableau({ colonnes, lignes, onClic, vide = 'Aucune fiche pour le moment.' }: {
-  colonnes: Colonne[]; lignes: Valeurs[]; onClic?: (l: Valeurs) => void; vide?: string;
-}) {
-  if (!lignes.length) return <p className="vide">{vide}</p>;
-  return (
-    <div className="tableau-defile">
-      <table>
-        <thead><tr>{colonnes.map((c) => <th key={c.titre} className={c.num ? 'num' : ''}>{c.titre}</th>)}</tr></thead>
-        <tbody>
-          {lignes.map((l, i) => (
-            <tr key={String(l.id ?? i)} onClick={onClic ? () => onClic(l) : undefined} className={onClic ? 'cliquable' : ''}
-              tabIndex={onClic ? 0 : undefined} onKeyDown={onClic ? (e) => { if (e.key === 'Enter') onClic(l); } : undefined}>
-              {colonnes.map((c) => <td key={c.titre} className={c.num ? 'num' : ''}>{c.rendu(l)}</td>)}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-export const dateFr = (d: unknown) => (d ? new Date(String(d) + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString('fr-FR') : '');

@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { Champ, Formulaire, Valeurs } from '../forms/types';
-import { champsManquants, enregistrer, nettoyer } from '../lib/data';
-import { messageErreur } from '../lib/supabase';
-import { useSession } from '../lib/session';
+import { champsManquants, enregistrer, nettoyer } from '../lib/store';
+import { useAuth } from '../lib/auth';
+import type { Table } from '../lib/db';
 
 type Props = {
   form: Formulaire;
@@ -10,15 +10,17 @@ type Props = {
   id?: string;
   /** Valeurs ajoutées à l'enregistrement (ex. depistage_id d'une référence) */
   extra?: Valeurs;
-  onEnregistre: (ligne: Valeurs | null) => void;
+  onEnregistre: (ligne: Valeurs) => void;
   onAnnuler?: () => void;
+  /** Bouton de suppression (administrateur) */
+  onSupprimer?: () => void;
 };
 
-export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler }: Props) {
-  const { profil, sites } = useSession();
+export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler, onSupprimer }: Props) {
+  const { compte, sites, appareil } = useAuth();
   const [v, setV] = useState<Valeurs>(() => ({
     ...(form.defaut?.() ?? {}),
-    ...(profil?.site_id && !initial ? { site_id: profil.site_id } : {}),
+    ...(compte?.site_id && !initial ? { site_id: compte.site_id } : {}),
     ...(initial ?? {}),
   }));
   const [erreurs, setErreurs] = useState<string[]>([]);
@@ -38,10 +40,10 @@ export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler
     setErreurs([]);
     setEnvoi(true);
     try {
-      const r = await enregistrer(form.table, { ...nettoyer(form, v), ...(extra ?? {}) }, id);
-      onEnregistre(r.horsLigne ? null : r.ligne);
+      const ligne = await enregistrer(form.table as Table, { ...nettoyer(form, v), ...(extra ?? {}) }, { compte: compte!, sites, appareil }, id);
+      onEnregistre(ligne);
     } catch (err) {
-      setErreurs([messageErreur(err)]);
+      setErreurs([(err as Error).message ?? String(err)]);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setEnvoi(false);
@@ -69,6 +71,7 @@ export function FormRenderer({ form, initial, id, extra, onEnregistre, onAnnuler
       ))}
       <div className="actions-fiche">
         {onAnnuler && <button type="button" className="btn secondaire" onClick={onAnnuler}>Annuler</button>}
+        {onSupprimer && <button type="button" className="btn danger" onClick={onSupprimer}>Supprimer</button>}
         <button type="submit" className="btn principal" disabled={envoi}>
           {envoi ? 'Enregistrement…' : id ? 'Enregistrer les modifications' : 'Enregistrer la fiche'}
         </button>
