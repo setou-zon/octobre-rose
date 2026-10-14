@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { LIBELLES } from '../forms/definitions';
+import { LIBELLES, depistage, reference, seance, synthese } from '../forms/definitions';
+import { BoutonPdf } from '../components/BoutonPdf';
 import { preparerMotDePasse, useAuth, verifierRegles, type Compte, type Role, type Site } from '../lib/auth';
 import { exporterConfiguration } from '../lib/configuration';
 import { TABLES, ecrire, effacer, metaEcrire, metaLire, tout } from '../lib/db';
@@ -91,6 +92,18 @@ export function PageDonnees() {
             )}
           </div>
         )}
+      </div>
+
+      <div className="carte">
+        <h3>Fiches vierges à imprimer</h3>
+        <p className="aide">Pour la saisie sur papier quand aucun téléphone n’est disponible.</p>
+        <div className="barre enveloppe">
+          <BoutonPdf form={seance} valeurs={null} titre="Outil 1 - Séance de sensibilisation" nomFichier="fiche-vierge_outil1_sensibilisation.pdf" libelle="Outil 1 – Sensibilisation" />
+          <BoutonPdf form={depistage} valeurs={null} titre="Outil 2 - Fiche individuelle de dépistage" nomFichier="fiche-vierge_outil2_depistage.pdf" libelle="Outil 2 – Dépistage" />
+          <BoutonPdf form={reference} valeurs={null} titre="Outil 4 - Fiche de référence / contre-référence" nomFichier="fiche-vierge_outil4_reference.pdf" libelle="Outil 4 – Référence"
+            enTete={[['Code bénéficiaire', ''], ['Patiente (nom, âge)', ''], ['Téléphone', ''], ['Structure qui réfère', '']]} />
+          <BoutonPdf form={synthese} valeurs={null} titre="Outil 7 - Logistique et difficultés du jour" nomFichier="fiche-vierge_outil7_logistique.pdf" libelle="Outil 7 – Logistique" />
+        </div>
       </div>
 
       <div className="carte">

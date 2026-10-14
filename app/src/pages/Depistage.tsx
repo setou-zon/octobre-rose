@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { depistage, reference } from '../forms/definitions';
 import type { Valeurs } from '../forms/types';
 import { FormRenderer } from '../components/FormRenderer';
+import { BoutonPdf } from '../components/BoutonPdf';
 import { Tableau } from '../components/Tableau';
 import { useAuth } from '../lib/auth';
 import type { Fiche } from '../lib/db';
@@ -30,6 +31,7 @@ export function PageNouvelleFiche({ allerA }: { allerA: (p: string) => void }) {
         <p className="aide">Inscrivez ce code sur la fiche papier et sur le registre.</p>
         <div className="actions-fiche">
           {doitReferer && <button className="btn principal" onClick={() => setReferer(resultat)}>Remplir la fiche de référence</button>}
+          <BoutonPdf form={depistage} valeurs={resultat} code={String(resultat.code)} confidentiel nomFichier={`fiche_${resultat.code}.pdf`} />
           <button className={`btn ${doitReferer ? 'secondaire' : 'principal'}`} onClick={recommencer}>Nouvelle bénéficiaire</button>
           <button className="btn secondaire" onClick={() => allerA('registre')}>Voir le registre</button>
         </div>
@@ -77,6 +79,7 @@ export function PageRegistre() {
         <h2>Fiche {String(fiche.code)}</h2>
         <div className="barre">
           <button className="btn secondaire" onClick={() => setReferer(fiche)}>Référer cette bénéficiaire</button>
+          <BoutonPdf form={depistage} valeurs={fiche} code={String(fiche.code)} confidentiel nomFichier={`fiche_${fiche.code}.pdf`} />
         </div>
         <FormRenderer form={depistage} initial={fiche} id={fiche.id}
           onAnnuler={() => setFiche(null)}
@@ -182,7 +185,17 @@ export function PageReferences() {
       <section>
         <h2>Référence {String(ref.numero)} – {String(dep?.code ?? '')}</h2>
         <p className="intro">{String(dep?.nom_prenoms ?? '')}{dep?.telephone ? ` · ${dep.telephone}` : ''}</p>
-        <div className="barre"><button className="btn secondaire" onClick={() => setImpression(edition)}>Imprimer la fiche</button></div>
+        <div className="barre">
+          <BoutonPdf form={reference} valeurs={ref} titre="Fiche de référence / contre-référence" code={String(ref.numero)} confidentiel
+            nomFichier={`reference_${ref.numero}.pdf`}
+            enTete={[
+              ['Code bénéficiaire', String(dep?.code ?? '')],
+              ['Patiente', `${dep?.nom_prenoms ?? ''}${dep?.age ? `, ${dep.age} ans` : ''}`],
+              ['Téléphone', String(dep?.telephone ?? '')],
+              ['Structure qui réfère', sites.find((s) => s.id === dep?.site_id)?.nom ?? ''],
+            ]} />
+          <button className="btn secondaire" onClick={() => setImpression(edition)}>Imprimer</button>
+        </div>
         <FormRenderer form={reference} initial={ref} id={ref.id}
           onAnnuler={() => setEdition(null)}
           onSupprimer={compte?.role === 'admin' ? async () => {

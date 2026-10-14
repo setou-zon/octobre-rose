@@ -4,6 +4,7 @@ import { useAuth } from '../lib/auth';
 import type { Fiche, Table } from '../lib/db';
 import { exporterCsv, liste, supprimer } from '../lib/store';
 import { FormRenderer } from './FormRenderer';
+import { BoutonPdf } from './BoutonPdf';
 import { Tableau, type Colonne } from './Tableau';
 
 type Props = {
@@ -35,6 +36,11 @@ export function PageListe({ form, colonnes, ordre, intro, libelleNouveau, nomExp
     return (
       <section>
         <h2>{existant ? `Modifier – ${form.titre}` : libelleNouveau}</h2>
+        {existant && (
+          <div className="barre">
+            <BoutonPdf form={form} valeurs={existant} nomFichier={`${nomExport}_${String(existant.date_seance ?? existant.date_activite ?? existant.updated_at).slice(0, 10)}.pdf`} />
+          </div>
+        )}
         <FormRenderer form={form} initial={existant} id={existant?.id}
           onAnnuler={() => setEdition(null)}
           onSupprimer={existant && compte?.role === 'admin' ? async () => {

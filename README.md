@@ -20,6 +20,8 @@ Application web installable (PWA) pour saisir les **8 outils de collecte** de la
 | 7 – Synthèse journalière par site | Synthèse du jour |
 | 8 – Synthèse finale des indicateurs | Indicateurs + Tableau de bord |
 
+Chaque fiche remplie se **télécharge en PDF** (bouton « Télécharger la fiche » quand elle est ouverte), et les fiches vierges des outils 1, 2, 4 et 7 se téléchargent depuis **Données** pour la saisie sur papier.
+
 ## Mise en route
 
 1. **Coordination** – ouvrir l'adresse et choisir *Je suis l'administrateur : créer mon compte*. Dans **Équipe**, ajouter les sites communautaires puis **Exporter la configuration**.
