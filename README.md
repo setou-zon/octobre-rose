@@ -5,7 +5,7 @@ Application web installable (PWA) pour saisir les **8 outils de collecte** de la
 **Adresse :** https://setou-zon.github.io/octobre-rose/
 
 - **Fonctionne sans internet** : après la première ouverture, l'application s'ouvre et enregistre les fiches hors connexion.
-- **S'installe** sur téléphone et ordinateur comme une application (bouton « Installer l'application » dans le menu ; sur iPhone : Safari → Partager → Sur l'écran d'accueil).
+- **S’installe** sur téléphone et ordinateur : bouton « Installer l’application » sur l’écran de connexion, dans l’en-tête et sur le tableau de bord (avec la marche à suivre si le navigateur ne propose pas l’installation directe).
 - **Base centrale Supabase** (projet « octobre rose ») : chaque fiche est enregistrée sur le téléphone puis envoyée automatiquement dès qu'il y a du réseau ; les fiches des autres agents arrivent de la même façon.
 - **Accès par compte** : chacun crée son compte, l'administrateur le valide.
 

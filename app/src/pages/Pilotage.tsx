@@ -3,6 +3,7 @@ import { synthese } from '../forms/definitions';
 import { FormRenderer } from '../components/FormRenderer';
 import { Tableau } from '../components/Tableau';
 import { Ruban } from '../components/Ruban';
+import { Installation } from '../components/Installation';
 import { useAuth } from '../lib/auth';
 import { metaEcrire, metaLire, type Fiche, type Table } from '../lib/db';
 import { exporterExcel } from '../lib/excel';
@@ -91,6 +92,7 @@ export function PageAccueil({ allerA }: { allerA: (p: string) => void }) {
         <div className="banniere-actions">
           <button className="btn blanc" onClick={() => allerA('fiche')}>+ Nouvelle bénéficiaire</button>
           <button className="btn contour-blanc" onClick={() => allerA('sensibilisation')}>+ Séance de sensibilisation</button>
+          <Installation variante="banniere" />
         </div>
       </div>
 

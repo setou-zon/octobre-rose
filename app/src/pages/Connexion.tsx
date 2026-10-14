@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Ruban } from '../components/Ruban';
 import { useAuth } from '../lib/auth';
+import { Installation } from '../components/Installation';
 
 function Cadre({ children, titre, sousTitre }: { children: React.ReactNode; titre: string; sousTitre: string }) {
   return (
@@ -10,6 +11,7 @@ function Cadre({ children, titre, sousTitre }: { children: React.ReactNode; titr
         <h1>{titre}</h1>
         <p className="sous-titre">{sousTitre}</p>
         {children}
+        <Installation variante="carte" />
       </div>
       <p className="pied">Association Développement par la Gouvernance · Campagne du 7 au 11 octobre 2026</p>
     </div>

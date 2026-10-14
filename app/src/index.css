@@ -274,3 +274,13 @@ input.cible { width: 7rem; text-align: right; min-height: 36px; padding: .3rem .
 a.badge { text-decoration: none; }
 details.carte summary { cursor: pointer; }
 details.carte[open] summary { margin-bottom: .6rem; }
+
+/* Installation */
+.installer-entete { font: inherit; font-size: .85rem; font-weight: 600; color: var(--rose-fonce); background: #fff; border: 0; border-radius: 999px; padding: .2rem .75rem; cursor: pointer; white-space: nowrap; min-height: 30px; }
+.installer-entete:hover { background: var(--rose-pale); }
+.fenetre-fond { position: fixed; inset: 0; z-index: 50; background: rgba(30, 0, 15, .45); display: grid; place-items: center; padding: 1rem; }
+.fenetre { background: #fff; border-radius: 18px; padding: 1.5rem; max-width: 440px; width: 100%; box-shadow: 0 20px 60px rgba(40, 0, 20, .35); text-align: left; color: var(--encre); }
+.fenetre h2 { color: var(--rose-fonce); }
+.fenetre ol { padding-left: 1.2rem; margin: 0 0 1rem; }
+.fenetre li { margin-bottom: .4rem; }
+@media (max-width: 760px) { .installer-entete { padding: .2rem .6rem; } }

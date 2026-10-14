@@ -8,6 +8,10 @@ import '@fontsource/eb-garamond/latin-700.css';
 import '@fontsource/eb-garamond/latin-400-italic.css';
 import './index.css';
 import App from './App';
+import { ecouterInstallation } from './lib/installation';
+
+// à capter avant l'affichage : le navigateur ne propose l'installation qu'une fois
+ecouterInstallation();
 
 // Service worker : l'application s'ouvre et fonctionne sans réseau après la première visite
 registerSW({ immediate: true });

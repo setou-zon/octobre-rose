@@ -84,6 +84,7 @@ function Coquille() {
             title={sync.derniere ? `Dernière synchronisation : ${new Date(sync.derniere).toLocaleString('fr-FR')}` : 'Jamais synchronisé'}>
             {sync.enCours ? 'Synchronisation…' : sync.enAttente ? `${sync.enAttente} à envoyer` : '✓ Synchronisé'}
           </a>
+          <Installation variante="entete" />
           <span className="utilisateur">{compte.nom_complet}</span>
           <button className="lien" onClick={() => {
             if (sync.enAttente && !confirm(`${sync.enAttente} fiche(s) ne sont pas encore envoyées. Elles restent sur ce téléphone et partiront à la prochaine connexion. Se déconnecter ?`)) return;
@@ -99,7 +100,7 @@ function Coquille() {
               {p.id === 'equipe' && demandes > 0 && <span className="pastille p-suspect" title="Demandes de compte à valider">{demandes}</span>}
             </a>
           ))}
-          <Installation />
+          <Installation variante="menu" />
         </nav>
         {menu && <div className="voile" onClick={() => setMenu(false)} />}
         <main className="contenu">
