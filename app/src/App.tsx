@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import { tout } from './lib/db';
-import type { Compte } from './lib/auth';
 import { AuthProvider, useAuth } from './lib/auth';
+import { supabase } from './lib/supabase';
+import { etatSync, synchroniser, type EtatSync } from './lib/sync';
 import { Ruban } from './components/Ruban';
 import { Installation } from './components/Installation';
-import { PageConnexion, PageInitialisation } from './pages/Connexion';
+import { PageConnexion, PageEnAttente, PageNonConfiguree } from './pages/Connexion';
 import { PageCommunication, PageSensibilisation } from './pages/Simples';
 import { PageNouvelleFiche, PageReferences, PageRegistre } from './pages/Depistage';
 import { PageAccueil, PageIndicateurs, PageSynthese } from './pages/Pilotage';
@@ -20,7 +20,7 @@ const PAGES: Page[] = [
   { id: 'communication', titre: 'Supports, médias et leaders', court: 'Communication', outil: '6' },
   { id: 'synthese', titre: 'Synthèse journalière', court: 'Synthèse du jour', outil: '7' },
   { id: 'indicateurs', titre: 'Indicateurs de la campagne', court: 'Indicateurs', outil: '8' },
-  { id: 'donnees', titre: 'Envoi et regroupement des données', court: 'Données' },
+  { id: 'donnees', titre: 'Synchronisation et téléchargements', court: 'Données' },
   { id: 'equipe', titre: 'Équipe et sites', court: 'Équipe', admin: true },
 ];
 
@@ -32,9 +32,24 @@ function Coquille() {
   const [menu, setMenu] = useState(false);
   const [enLigne, setEnLigne] = useState(navigator.onLine);
   const [demandes, setDemandes] = useState(0);
+  const [sync, setSync] = useState<EtatSync>(etatSync());
   useEffect(() => {
-    if (compte?.role === 'admin') tout<Compte>('comptes').then((c) => setDemandes(c.filter((x) => x.en_attente).length));
+    if (compte?.role !== 'admin' || !navigator.onLine) return;
+    supabase.from('profils').select('id', { count: 'exact', head: true }).eq('valide', false).eq('actif', true)
+      .then(({ count }) => setDemandes(count ?? 0));
   }, [compte, page]);
+
+  // synchronisation : au démarrage, au retour du réseau, puis toutes les 2 minutes
+  useEffect(() => {
+    if (etat !== 'connecte') return;
+    const s = (e: Event) => setSync((e as CustomEvent<EtatSync>).detail);
+    const go = () => { synchroniser(); };
+    window.addEventListener('or26-sync', s);
+    window.addEventListener('online', go);
+    const t = window.setInterval(go, 120000);
+    go();
+    return () => { window.removeEventListener('or26-sync', s); window.removeEventListener('online', go); window.clearInterval(t); };
+  }, [etat]);
 
   useEffect(() => {
     const h = () => { setPage(pageDepuisHash()); setMenu(false); window.scrollTo({ top: 0 }); };
@@ -46,8 +61,9 @@ function Coquille() {
   }, []);
 
   if (etat === 'chargement') return <div className="chargement"><Ruban className="ruban-chargement" />Chargement…</div>;
-  if (etat === 'initialisation') return <PageInitialisation />;
+  if (etat === 'non_configure') return <PageNonConfiguree />;
   if (etat === 'deconnecte' || !compte) return <PageConnexion />;
+  if (etat === 'en_attente') return <PageEnAttente />;
 
   const allerA = (p: string) => { window.location.hash = `#/${p}`; };
   const visibles = PAGES.filter((p) => !p.admin || compte.role === 'admin');
@@ -62,8 +78,15 @@ function Coquille() {
           <span className={`badge ${enLigne ? 'en-ligne' : 'hors-ligne'}`} title="Les fiches sont toujours enregistrées sur l’appareil">
             {enLigne ? 'En ligne' : 'Hors ligne · saisie possible'}
           </span>
+          <a className={`badge ${sync.enAttente ? 'attente' : 'en-ligne'}`} href="#/donnees"
+            title={sync.derniere ? `Dernière synchronisation : ${new Date(sync.derniere).toLocaleString('fr-FR')}` : 'Jamais synchronisé'}>
+            {sync.enCours ? 'Synchronisation…' : sync.enAttente ? `${sync.enAttente} à envoyer` : '✓ Synchronisé'}
+          </a>
           <span className="utilisateur">{compte.nom_complet}</span>
-          <button className="lien" onClick={deconnexion}>Déconnexion</button>
+          <button className="lien" onClick={() => {
+            if (sync.enAttente && !confirm(`${sync.enAttente} fiche(s) ne sont pas encore envoyées. Elles restent sur ce téléphone et partiront à la prochaine connexion. Se déconnecter ?`)) return;
+            deconnexion();
+          }}>Déconnexion</button>
         </div>
       </header>
       <div className="corps">

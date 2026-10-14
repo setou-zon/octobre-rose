@@ -1,6 +1,7 @@
 import type { Formulaire, Valeurs } from '../forms/types';
 import type { Compte, Site } from './auth';
 import { TABLES, compteurSuivant, ecrire, ecrireLot, lire, metaEcrire, metaLire, tout, type Fiche, type Table } from './db';
+import { programmerSynchro } from './sync';
 
 // ---------------------------------------------------------------------------
 // Nettoyage et contrôle des valeurs d'un formulaire
@@ -38,7 +39,7 @@ export function champsManquants(f: Formulaire, v: Valeurs): string[] {
 // ---------------------------------------------------------------------------
 // Événement de mise à jour (le tableau de bord se rafraîchit tout seul)
 // ---------------------------------------------------------------------------
-const signaler = () => window.dispatchEvent(new Event('or26-donnees'));
+const signaler = () => { window.dispatchEvent(new Event('or26-donnees')); programmerSynchro(); };
 
 // ---------------------------------------------------------------------------
 // Lecture avec droits : un agent ne voit les fiches nominatives que de son site
@@ -124,6 +125,7 @@ export async function enregistrer(table: Table, valeurs: Valeurs, ctx: { compte:
     Object.assign(fiche, { total_femmes: f, total_hommes: h, total: f + h });
   }
 
+  fiche._a_envoyer = true;
   await ecrire(table, fiche);
   signaler();
   return fiche;
@@ -133,10 +135,10 @@ export async function enregistrer(table: Table, valeurs: Valeurs, ctx: { compte:
 export async function supprimer(table: Table, id: string, compte: Compte) {
   const f = await lire(table, id);
   if (!f) return;
-  await ecrire(table, { ...f, supprime: true, updated_at: new Date().toISOString(), modifie_par: compte.nom_complet });
+  await ecrire(table, { ...f, supprime: true, _a_envoyer: true, updated_at: new Date().toISOString(), modifie_par: compte.nom_complet });
   if (table === 'depistages') {
     const refs = (await tout('references_cas')).filter((r) => r.depistage_id === id && !r.supprime);
-    await ecrireLot('references_cas', refs.map((r) => ({ ...r, supprime: true, updated_at: new Date().toISOString() })));
+    await ecrireLot('references_cas', refs.map((r) => ({ ...r, supprime: true, _a_envoyer: true, updated_at: new Date().toISOString() })));
   }
   signaler();
 }
@@ -195,8 +197,8 @@ export async function importerPaquet(texte: string, fichier = ''): Promise<Bilan
         }
         codesPris.set(String(f[champCode]), f.id);
       }
-      if (!l) { aEcrire.push(f); bilan.ajoutees++; }
-      else if (f.updated_at > l.updated_at) { aEcrire.push(f); bilan.misesAJour++; }
+      if (!l) { aEcrire.push({ ...f, _a_envoyer: true }); bilan.ajoutees++; }
+      else if (f.updated_at > l.updated_at) { aEcrire.push({ ...f, _a_envoyer: true }); bilan.misesAJour++; }
       else bilan.ignorees++;
     }
     await ecrireLot(t, aEcrire);

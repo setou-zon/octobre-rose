@@ -266,3 +266,11 @@ input.cible { width: 7rem; text-align: right; min-height: 36px; padding: .3rem .
 .btn.petit { min-height: 36px; padding: .3rem .8rem; font-size: .92rem; }
 .alerte-demandes { display: block; text-decoration: none; }
 @media (max-width: 760px) { .liste-demandes li { grid-template-columns: 1fr; } }
+
+/* Synchronisation */
+.synchro { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; border-left: 4px solid var(--rose); }
+.etat-synchro { font-size: 1.1rem; margin: 0 0 .2rem; }
+.badge.attente { text-decoration: none; }
+a.badge { text-decoration: none; }
+details.carte summary { cursor: pointer; }
+details.carte[open] summary { margin-bottom: .6rem; }

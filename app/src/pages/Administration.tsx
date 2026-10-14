@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LIBELLES, depistage, reference, seance, synthese } from '../forms/definitions';
 import { BoutonPdf } from '../components/BoutonPdf';
-import { preparerMotDePasse, useAuth, verifierRegles, type Compte, type Role, type Site } from '../lib/auth';
-import { exporterConfiguration } from '../lib/configuration';
-import { TABLES, ecrire, effacer, metaEcrire, metaLire, tout } from '../lib/db';
+import { chargerSites, useAuth, type Compte, type Role, type Site } from '../lib/auth';
+import { TABLES, tout } from '../lib/db';
 import { dateFr } from '../lib/format';
 import { exporterPaquet, importerPaquet, liste, type BilanImport } from '../lib/store';
+import { messageErreur, supabase } from '../lib/supabase';
+import { etatSync, synchroniser, type EtatSync } from '../lib/sync';
 
 const NOMS_TABLES: Record<string, string> = {
   seances_sensibilisation: 'Séances de sensibilisation',
@@ -18,29 +19,32 @@ const NOMS_TABLES: Record<string, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// Données : envoi à la coordination, import, sauvegarde
+// Données : synchronisation avec la base centrale, sauvegarde, fiches vierges
 // ---------------------------------------------------------------------------
 export function PageDonnees() {
   const { compte } = useAuth();
   const admin = compte?.role === 'admin';
-  const [compteurs, setCompteurs] = useState<Record<string, number>>({});
-  const [derniere, setDerniere] = useState<string | null>(null);
+  const [sync, setSync] = useState<EtatSync>(etatSync());
+  const [compteurs, setCompteurs] = useState<Record<string, { total: number; attente: number }>>({});
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null);
   const [bilans, setBilans] = useState<BilanImport[]>([]);
 
   const charger = useCallback(async () => {
-    const c: Record<string, number> = {};
-    for (const t of TABLES) c[t] = (await liste(t, compte)).length;
+    const c: Record<string, { total: number; attente: number }> = {};
+    for (const t of TABLES) {
+      const visibles = await liste(t, compte);
+      const attente = (await tout(t)).filter((f) => f._a_envoyer).length;
+      c[t] = { total: visibles.length, attente };
+    }
     setCompteurs(c);
-    setDerniere((await metaLire<string>('derniere-sauvegarde')) ?? null);
   }, [compte]);
-  useEffect(() => { charger(); }, [charger]);
 
-  async function exporter() {
-    const n = await exporterPaquet(compte!);
-    setMessage({ type: 'succes', texte: `Fichier créé avec ${n} fiche(s). Envoyez-le à la coordination (WhatsApp, e-mail, clé USB).` });
+  useEffect(() => {
     charger();
-  }
+    const s = (e: Event) => { setSync((e as CustomEvent<EtatSync>).detail); charger(); };
+    window.addEventListener('or26-sync', s);
+    return () => window.removeEventListener('or26-sync', s);
+  }, [charger]);
 
   async function importer(fichiers: FileList | null) {
     if (!fichiers?.length) return;
@@ -48,50 +52,45 @@ export function PageDonnees() {
     try {
       for (const f of Array.from(fichiers)) res.push(await importerPaquet(await f.text(), f.name));
       setBilans(res);
-      setMessage({ type: 'succes', texte: `${res.length} fichier(s) importé(s).` });
+      setMessage({ type: 'succes', texte: `${res.length} fichier(s) importé(s). Les fiches vont être envoyées à la base centrale.` });
+      synchroniser();
     } catch (e) {
       setMessage({ type: 'erreur', texte: (e as Error).message });
     }
     charger();
   }
 
-  const total = Object.values(compteurs).reduce((s, n) => s + n, 0);
-  const ancienne = !derniere || Date.now() - new Date(derniere).getTime() > 24 * 3600 * 1000;
-
   return (
     <section>
-      <p className="intro">Les fiches sont enregistrées sur cet appareil, même sans internet. Pour regrouper les données de tous les appareils, chaque agent envoie son fichier à la coordination, qui l’importe.</p>
+      <p className="intro">Chaque fiche est d’abord enregistrée sur ce téléphone, puis envoyée automatiquement à la base centrale dès qu’il y a du réseau. Les fiches des autres agents arrivent de la même façon.</p>
       {message && <div className={`alerte ${message.type}`} role="status">{message.texte}</div>}
 
-      <div className="deux-colonnes">
-        <div className="carte">
-          <h3>1. Envoyer mes fiches à la coordination</h3>
-          <p>Crée un fichier avec toutes les fiches de cet appareil. À faire chaque soir.</p>
-          {total > 0 && ancienne && <div className="alerte attention">{derniere ? `Dernier fichier créé le ${dateFr(derniere)}.` : 'Aucun fichier créé pour l’instant.'} Pensez à le faire aujourd’hui : il sert aussi de sauvegarde.</div>}
-          <button className="btn principal" onClick={exporter} disabled={!total}>Créer le fichier d’envoi</button>
+      <div className="carte synchro">
+        <div>
+          <h3>Base centrale</h3>
+          <p className="etat-synchro">
+            {sync.enCours ? 'Synchronisation en cours…'
+              : sync.enAttente ? <><b>{sync.enAttente}</b> fiche(s) en attente d’envoi{navigator.onLine ? '' : ' (pas de réseau)'}</>
+              : <>✓ Toutes les fiches de ce téléphone sont dans la base centrale</>}
+          </p>
+          <p className="aide">Dernière synchronisation : {sync.derniere ? new Date(sync.derniere).toLocaleString('fr-FR') : 'jamais'}</p>
+          {sync.erreur && <div className="alerte erreur">Problème : {sync.erreur}</div>}
+          {sync.renumerotes.length > 0 && (
+            <div className="alerte attention">
+              Codes déjà utilisés par une autre fiche, renumérotés : {sync.renumerotes.map((r) => `${r.ancien} → ${r.nouveau}`).join(' · ')}. Corrigez-les sur les fiches papier.
+            </div>
+          )}
         </div>
-        {admin && (
-          <div className="carte">
-            <h3>2. Importer les fichiers des agents</h3>
-            <p>Sélectionnez un ou plusieurs fichiers reçus. Une fiche déjà présente n’est jamais dupliquée : la version la plus récente est gardée.</p>
-            <label className="btn secondaire fichier">
-              Choisir les fichiers…
-              <input type="file" accept=".json,application/json" multiple onChange={(e) => { importer(e.target.files); e.target.value = ''; }} />
-            </label>
-            {bilans.length > 0 && (
-              <ul className="bilans">
-                {bilans.map((b, i) => (
-                  <li key={i}>
-                    <b>{b.exporte_par}</b> : {b.ajoutees} nouvelle(s), {b.misesAJour} mise(s) à jour, {b.ignorees} déjà à jour
-                    {b.renumerotees.length > 0 && (
-                      <div className="alerte attention">Codes déjà utilisés par une autre fiche, renumérotés : {b.renumerotees.join(' · ')}. Corrigez-les sur les fiches papier.</div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
+        <button className="btn principal" disabled={sync.enCours || !navigator.onLine} onClick={() => synchroniser()}>Synchroniser maintenant</button>
+      </div>
+
+      <div className="carte">
+        <h3>Fiches disponibles sur ce téléphone</h3>
+        <ul className="compteurs">
+          {TABLES.map((t) => (
+            <li key={t}><span>{NOMS_TABLES[t]}{compteurs[t]?.attente ? <span className="discret"> · {compteurs[t].attente} à envoyer</span> : null}</span><b>{compteurs[t]?.total ?? 0}</b></li>
+          ))}
+        </ul>
       </div>
 
       <div className="carte">
@@ -106,175 +105,145 @@ export function PageDonnees() {
         </div>
       </div>
 
-      <div className="carte">
-        <h3>Fiches sur cet appareil</h3>
-        <ul className="compteurs">
-          {TABLES.map((t) => <li key={t}><span>{NOMS_TABLES[t]}</span><b>{compteurs[t] ?? 0}</b></li>)}
-        </ul>
-        <p className="aide">Les données restent dans ce navigateur. Ne videz pas les données du navigateur et ne désinstallez pas l’application sans avoir créé un fichier d’envoi.</p>
-      </div>
+      <details className="carte">
+        <summary><b>Sauvegarde de secours (fichier)</b></summary>
+        <p className="aide">Sans réseau pendant longtemps, un agent peut créer un fichier avec ses fiches et l’envoyer par WhatsApp ou clé USB ; un administrateur l’importe et les fiches partent vers la base centrale.</p>
+        <div className="barre">
+          <button className="btn secondaire" onClick={async () => { const n = await exporterPaquet(compte!); setMessage({ type: 'succes', texte: `Fichier de sauvegarde créé (${n} fiches).` }); }}>Créer un fichier de sauvegarde</button>
+          {admin && (
+            <label className="btn secondaire fichier">
+              Importer des fichiers…
+              <input type="file" accept=".json,application/json" multiple onChange={(e) => { importer(e.target.files); e.target.value = ''; }} />
+            </label>
+          )}
+        </div>
+        {bilans.length > 0 && (
+          <ul className="bilans">
+            {bilans.map((b, i) => (
+              <li key={i}>
+                <b>{b.exporte_par}</b> : {b.ajoutees} nouvelle(s), {b.misesAJour} mise(s) à jour, {b.ignorees} déjà présente(s)
+                {b.renumerotees.length > 0 && <div className="alerte attention">Renumérotés : {b.renumerotees.join(' · ')}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </details>
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Équipe : comptes, sites, configuration (administrateur)
+// Équipe : validation des comptes, rôles, sites (administrateur, en ligne)
 // ---------------------------------------------------------------------------
 export function PageEquipe() {
   const { compte: moi, sites, rafraichir } = useAuth();
-  const [comptes, setComptes] = useState<Compte[]>([]);
-  const [formulaire, setFormulaire] = useState<Partial<Compte> & { mdp?: string } | null>(null);
+  const [profils, setProfils] = useState<Compte[]>([]);
+  const [choixSite, setChoixSite] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null);
   const [nouveauSite, setNouveauSite] = useState({ code: '', nom: '', type: 'communautaire' as Site['type'] });
+  const [chargement, setChargement] = useState(true);
 
   const charger = useCallback(async () => {
-    setComptes((await tout<Compte>('comptes')).sort((a, b) => a.nom_complet.localeCompare(b.nom_complet)));
+    setChargement(true);
+    const { data, error } = await supabase.from('profils').select('*').order('created_at', { ascending: false });
+    if (error) setMessage({ type: 'erreur', texte: navigator.onLine ? messageErreur(error) : 'La gestion de l’équipe demande du réseau.' });
+    else setProfils((data ?? []) as Compte[]);
+    setChargement(false);
   }, []);
   useEffect(() => { charger(); }, [charger]);
 
-  const adminsActifs = comptes.filter((c) => c.role === 'admin' && c.actif && !c.en_attente);
-  const demandes = comptes.filter((c) => c.en_attente);
-  const [choixSite, setChoixSite] = useState<Record<string, string>>({});
-
-  async function valider(c: Compte) {
-    const site = choixSite[c.id] ?? (c.site_souhaite != null ? String(c.site_souhaite) : '');
-    await ecrire('comptes', { ...c, actif: true, en_attente: false, site_id: site ? Number(site) : null });
-    setMessage({ type: 'succes', texte: `Compte de ${c.nom_complet} validé : la personne peut se connecter sur cet appareil.` });
-    charger();
-  }
-  async function refuser(c: Compte) {
-    if (!confirm(`Refuser et supprimer la demande de ${c.nom_complet} ?`)) return;
-    await effacer('comptes', c.id);
-    setMessage({ type: 'succes', texte: 'Demande refusée.' });
-    charger();
-  }
-
-  async function enregistrerCompte(e: React.FormEvent) {
-    e.preventDefault(); setMessage(null);
-    const f = formulaire!;
-    try {
-      const identifiant = (f.identifiant ?? '').trim();
-      if (!identifiant || !(f.nom_complet ?? '').trim()) throw new Error('Nom et identifiant obligatoires.');
-      if (comptes.some((c) => c.identifiant.toLowerCase() === identifiant.toLowerCase() && c.id !== f.id)) throw new Error('Cet identifiant est déjà utilisé.');
-      const existant = comptes.find((c) => c.id === f.id);
-      if (!existant && !f.mdp) throw new Error('Choisissez un mot de passe.');
-      if (f.mdp) { const err = verifierRegles(f.mdp); if (err) throw new Error(err); }
-      if (existant?.role === 'admin' && (f.role !== 'admin' || !f.actif) && adminsActifs.length === 1) throw new Error('Il doit rester au moins un administrateur actif.');
-      const c: Compte = {
-        ...(existant ?? { id: crypto.randomUUID(), created_at: new Date().toISOString(), sel: '', empreinte: '' }),
-        identifiant, nom_complet: f.nom_complet!.trim(), role: (f.role ?? 'agent') as Role,
-        site_id: f.site_id ?? null, actif: f.actif ?? true, en_attente: false,
-        ...(f.mdp ? await preparerMotDePasse(f.mdp) : {}),
-      };
-      await ecrire('comptes', c);
-      setFormulaire(null);
-      setMessage({ type: 'succes', texte: `Compte « ${c.identifiant} » enregistré. Pensez à exporter la configuration pour les autres appareils.` });
-      charger();
-      if (c.id === moi?.id) rafraichir();
-    } catch (err) { setMessage({ type: 'erreur', texte: (err as Error).message }); }
+  async function maj(p: Compte, champs: Partial<Compte>, texte: string) {
+    setMessage(null);
+    const { error } = await supabase.from('profils').update(champs).eq('id', p.id);
+    if (error) setMessage({ type: 'erreur', texte: messageErreur(error) });
+    else { setMessage({ type: 'succes', texte }); charger(); if (p.id === moi?.id) rafraichir(); }
   }
 
   async function ajouterSite(e: React.FormEvent) {
     e.preventDefault(); setMessage(null);
     const code = nouveauSite.code.trim().toUpperCase();
     if (!/^[A-Z]{2,5}$/.test(code)) return setMessage({ type: 'erreur', texte: 'Code du site : 2 à 5 lettres (ex. GOU).' });
-    if (sites.some((s) => s.code === code)) return setMessage({ type: 'erreur', texte: 'Ce code de site existe déjà.' });
     if (!nouveauSite.nom.trim()) return setMessage({ type: 'erreur', texte: 'Indiquez le nom du site.' });
-    const liste = (await metaLire<Site[]>('sites')) ?? sites;
-    await metaEcrire('sites', [...liste, { id: Math.max(0, ...liste.map((s) => s.id)) + 1, code, nom: nouveauSite.nom.trim(), type: nouveauSite.type }]);
+    const id = Math.max(0, ...sites.map((s) => s.id)) + 1;
+    const { error } = await supabase.from('sites').insert({ id, code, nom: nouveauSite.nom.trim(), type: nouveauSite.type });
+    if (error) return setMessage({ type: 'erreur', texte: /duplicate/.test(error.message) ? 'Ce code de site existe déjà.' : messageErreur(error) });
     setNouveauSite({ code: '', nom: '', type: 'communautaire' });
-    await rafraichir();
+    await chargerSites(); await rafraichir();
     setMessage({ type: 'succes', texte: `Site ${code} ajouté.` });
   }
 
-  if (formulaire) {
-    const nouveau = !formulaire.id;
-    return (
-      <section>
-        <h2>{nouveau ? 'Nouveau compte' : `Modifier ${formulaire.identifiant}`}</h2>
-        {message && <div className={`alerte ${message.type}`}>{message.texte}</div>}
-        <form className="fiche" onSubmit={enregistrerCompte}>
-          <fieldset className="section">
-            <legend>Compte</legend>
-            <div className="grille">
-              <label className="champ">Nom et prénom(s)<input value={formulaire.nom_complet ?? ''} onChange={(e) => setFormulaire({ ...formulaire, nom_complet: e.target.value })} required /></label>
-              <label className="champ">Identifiant de connexion<input value={formulaire.identifiant ?? ''} autoCapitalize="none" onChange={(e) => setFormulaire({ ...formulaire, identifiant: e.target.value })} required /></label>
-              <label className="champ">Rôle
-                <select value={formulaire.role ?? 'agent'} onChange={(e) => setFormulaire({ ...formulaire, role: e.target.value as Role })}>
-                  {Object.entries(LIBELLES.role).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </label>
-              <label className="champ">Site
-                <select value={formulaire.site_id ?? ''} onChange={(e) => setFormulaire({ ...formulaire, site_id: e.target.value ? Number(e.target.value) : null })}>
-                  <option value="">Tous les sites</option>
-                  {sites.map((s) => <option key={s.id} value={s.id}>{s.nom}</option>)}
-                </select>
-                <small className="aide">Un agent rattaché à un site ne voit que les fiches nominatives de ce site.</small>
-              </label>
-              <label className="champ">{nouveau ? 'Mot de passe (8 caractères minimum)' : 'Nouveau mot de passe (laisser vide pour ne pas changer)'}
-                <input type="text" autoComplete="new-password" value={formulaire.mdp ?? ''} onChange={(e) => setFormulaire({ ...formulaire, mdp: e.target.value })} />
-              </label>
-              <label className="case"><input type="checkbox" checked={formulaire.actif ?? true} onChange={(e) => setFormulaire({ ...formulaire, actif: e.target.checked })} /> Compte actif</label>
-            </div>
-          </fieldset>
-          <div className="actions-fiche">
-            <button type="button" className="btn secondaire" onClick={() => { setFormulaire(null); setMessage(null); }}>Annuler</button>
-            <button className="btn principal">Enregistrer le compte</button>
-          </div>
-        </form>
-      </section>
-    );
-  }
+  const demandes = profils.filter((p) => !p.valide && p.actif);
+  const equipe = profils.filter((p) => p.valide || !p.actif);
+  const adminsActifs = profils.filter((p) => p.role === 'admin' && p.valide && p.actif).length;
+  const siteDe = (p: Compte) => choixSite[p.id] ?? (p.site_souhaite != null ? String(p.site_souhaite) : '');
 
   return (
     <section>
-      <p className="intro">Chaque personne crée son compte depuis l’écran de connexion ; vous le validez ici. Les comptes sont enregistrés sur chaque téléphone : pour retrouver les mêmes comptes ailleurs, exportez la configuration et installez-la sur les autres téléphones.</p>
+      <p className="intro">Chaque personne crée son compte depuis l’écran de connexion ; vous le validez ici et choisissez son site. Un agent rattaché à un site ne voit que les fiches nominatives de ce site.</p>
       {message && <div className={`alerte ${message.type}`}>{message.texte}</div>}
+      {chargement && <p className="chargement">Chargement…</p>}
+
       {demandes.length > 0 && (
         <div className="carte demandes">
           <h3>Demandes de compte à valider ({demandes.length})</h3>
           <ul className="liste-demandes">
-            {demandes.map((c) => (
-              <li key={c.id}>
+            {demandes.map((p) => (
+              <li key={p.id}>
                 <div>
-                  <b>{c.nom_complet}</b> <span className="mono discret">{c.identifiant}</span>
-                  <div className="discret">{c.telephone ? `${c.telephone} · ` : ''}demande du {dateFr(c.created_at)}</div>
+                  <b>{p.nom_complet}</b> <span className="mono discret">{p.identifiant}</span>
+                  <div className="discret">{p.telephone ? `${p.telephone} · ` : ''}demande du {dateFr(p.created_at)}</div>
                 </div>
-                <select aria-label={`Site de ${c.nom_complet}`} value={choixSite[c.id] ?? (c.site_souhaite != null ? String(c.site_souhaite) : '')}
-                  onChange={(e) => setChoixSite({ ...choixSite, [c.id]: e.target.value })}>
+                <select aria-label={`Site de ${p.nom_complet}`} value={siteDe(p)} onChange={(e) => setChoixSite({ ...choixSite, [p.id]: e.target.value })}>
                   <option value="">Tous les sites</option>
                   {sites.map((s) => <option key={s.id} value={s.id}>{s.nom}</option>)}
                 </select>
                 <div className="actions-demande">
-                  <button className="btn principal petit" onClick={() => valider(c)}>Valider</button>
-                  <button className="btn secondaire petit" onClick={() => refuser(c)}>Refuser</button>
+                  <button className="btn principal petit" onClick={() => maj(p, { valide: true, site_id: siteDe(p) ? Number(siteDe(p)) : null }, `Compte de ${p.nom_complet} validé.`)}>Valider</button>
+                  <button className="btn secondaire petit" onClick={() => { if (confirm(`Refuser la demande de ${p.nom_complet} ?`)) maj(p, { actif: false }, 'Demande refusée.'); }}>Refuser</button>
                 </div>
               </li>
             ))}
           </ul>
         </div>
       )}
-      <div className="barre">
-        <button className="btn principal" onClick={() => { setMessage(null); setFormulaire({ role: 'agent', actif: true, site_id: null }); }}>+ Nouveau compte</button>
-        <button className="btn secondaire" onClick={exporterConfiguration}>Exporter la configuration</button>
-      </div>
-      <div className="tableau-defile">
-        <table>
-          <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Site</th><th>État</th></tr></thead>
-          <tbody>
-            {comptes.filter((c) => !c.en_attente).map((c) => (
-              <tr key={c.id} className="cliquable" tabIndex={0} onClick={() => { setMessage(null); setFormulaire({ ...c, mdp: '' }); }}
-                onKeyDown={(e) => { if (e.key === 'Enter') setFormulaire({ ...c, mdp: '' }); }}>
-                <td>{c.nom_complet}{c.id === moi?.id ? ' (vous)' : ''}</td>
-                <td className="mono">{c.identifiant}</td>
-                <td>{LIBELLES.role[c.role]}</td>
-                <td>{sites.find((s) => s.id === c.site_id)?.nom ?? 'Tous'}</td>
-                <td>{c.actif ? <span className="pastille p-normal">Actif</span> : <span className="pastille p-neutre">Désactivé</span>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+
+      {equipe.length > 0 && (
+        <div className="tableau-defile">
+          <table>
+            <thead><tr><th>Nom</th><th>Identifiant</th><th>Rôle</th><th>Site</th><th>Accès</th></tr></thead>
+            <tbody>
+              {equipe.map((p) => {
+                const dernierAdmin = p.role === 'admin' && adminsActifs <= 1;
+                return (
+                  <tr key={p.id}>
+                    <td>{p.nom_complet}{p.id === moi?.id ? ' (vous)' : ''}<div className="discret">{p.telephone ?? ''}</div></td>
+                    <td className="mono">{p.identifiant}</td>
+                    <td>
+                      <select value={p.role} disabled={dernierAdmin} onChange={(e) => maj(p, { role: e.target.value as Role }, 'Rôle modifié.')}>
+                        {Object.entries(LIBELLES.role).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      <select value={p.site_id ?? ''} onChange={(e) => maj(p, { site_id: e.target.value ? Number(e.target.value) : null }, 'Site modifié.')}>
+                        <option value="">Tous les sites</option>
+                        {sites.map((s) => <option key={s.id} value={s.id}>{s.nom}</option>)}
+                      </select>
+                    </td>
+                    <td>
+                      {p.id === moi?.id || dernierAdmin ? <span className="pastille p-normal">Actif</span> : (
+                        <button className={`btn ${p.actif && p.valide ? 'secondaire' : 'principal'} petit`}
+                          onClick={() => maj(p, p.actif && p.valide ? { actif: false } : { actif: true, valide: true }, p.actif ? 'Compte désactivé.' : 'Compte réactivé.')}>
+                          {p.actif && p.valide ? 'Désactiver' : 'Réactiver'}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <div className="carte">
         <h3>Sites</h3>
@@ -291,7 +260,6 @@ export function PageEquipe() {
           <button className="btn secondaire">Ajouter le site</button>
         </form>
       </div>
-
     </section>
   );
 }

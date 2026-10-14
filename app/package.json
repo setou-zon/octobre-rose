@@ -7,10 +7,12 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "db:sql": "node scripts/colonnes.mjs && node scripts/sql.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
     "@fontsource/eb-garamond": "^5.2.5",
+    "@supabase/supabase-js": "^2.117.3",
     "jspdf": "^2.5.2",
     "jspdf-autotable": "^3.8.4",
     "react": "^19.1.0",

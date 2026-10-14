@@ -1,21 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
-import { demanderPersistance, ecrire, metaEcrire, metaLire, tout } from './db';
+import { demanderPersistance, metaEcrire, metaLire } from './db';
+import { baseConfiguree, emailDe, messageErreur, supabase } from './supabase';
 
 export type Role = 'admin' | 'agent';
+/** Profil d'un membre de l'équipe (table « profils » de la base centrale) */
 export type Compte = {
   id: string;
   identifiant: string;
   nom_complet: string;
+  telephone?: string | null;
   role: Role;
   site_id: number | null;
-  actif: boolean;
-  /** Compte créé par la personne elle-même, pas encore validé par un administrateur */
-  en_attente?: boolean;
-  telephone?: string;
   site_souhaite?: number | null;
-  sel: string;
-  empreinte: string;
-  created_at: string;
+  valide: boolean;
+  actif: boolean;
+  created_at?: string;
 };
 export type Site = { id: number; code: string; nom: string; type: 'formation_sanitaire' | 'communautaire' };
 
@@ -24,135 +23,95 @@ export const SITES_DEFAUT: Site[] = [
   { id: 2, code: 'CEN', nom: 'CENOU', type: 'formation_sanitaire' },
 ];
 
-// ---------------------------------------------------------------------------
-// Mots de passe : jamais stockés en clair (PBKDF2-SHA256, 210 000 itérations)
-// ---------------------------------------------------------------------------
-const hex = (b: ArrayBuffer | Uint8Array) => Array.from(new Uint8Array(b)).map((x) => x.toString(16).padStart(2, '0')).join('');
-const deHex = (h: string) => new Uint8Array(h.match(/../g)!.map((x) => parseInt(x, 16)));
-
-async function deriver(motDePasse: string, selHex: string) {
-  const cle = await crypto.subtle.importKey('raw', new TextEncoder().encode(motDePasse), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: deHex(selHex), iterations: 210000 }, cle, 256);
-  return hex(bits);
-}
-
-export async function preparerMotDePasse(motDePasse: string) {
-  const sel = hex(crypto.getRandomValues(new Uint8Array(16)));
-  return { sel, empreinte: await deriver(motDePasse, sel) };
-}
-
 export function verifierRegles(motDePasse: string): string | null {
   if (motDePasse.length < 8) return 'Le mot de passe doit faire au moins 8 caractères.';
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Session (8 heures, ou jusqu'à la fermeture du navigateur)
-// ---------------------------------------------------------------------------
-const CLE_SESSION = 'or26-session';
-const DUREE = 8 * 3600 * 1000;
-
-function lireSession(): string | null {
-  try {
-    const s = JSON.parse(sessionStorage.getItem(CLE_SESSION) ?? localStorage.getItem(CLE_SESSION) ?? 'null');
-    if (!s || s.expire < Date.now()) return null;
-    return s.id as string;
-  } catch { return null; }
-}
-function ecrireSession(id: string | null, rester = false) {
-  try {
-    sessionStorage.removeItem(CLE_SESSION); localStorage.removeItem(CLE_SESSION);
-    if (id) (rester ? localStorage : sessionStorage).setItem(CLE_SESSION, JSON.stringify({ id, expire: Date.now() + DUREE }));
-  } catch { /* stockage indisponible */ }
-}
-
-// ---------------------------------------------------------------------------
-type Etat = 'chargement' | 'initialisation' | 'deconnecte' | 'connecte';
+type Etat = 'chargement' | 'non_configure' | 'deconnecte' | 'en_attente' | 'connecte';
 type Ctx = {
   etat: Etat;
   compte: Compte | null;
   sites: Site[];
-  connexion: (identifiant: string, motDePasse: string, rester: boolean) => Promise<void>;
-  deconnexion: () => void;
-  initialiser: (p: { nom: string; identifiant: string; motDePasse: string }) => Promise<void>;
-  inscrire: (p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) => Promise<Compte>;
-  validerSurPlace: (p: { demande: Compte; identifiantAdmin: string; motDePasseAdmin: string; site_id: number | null }) => Promise<void>;
+  connexion: (identifiant: string, motDePasse: string) => Promise<void>;
+  deconnexion: () => Promise<void>;
+  inscrire: (p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) => Promise<void>;
   rafraichir: () => Promise<void>;
 };
 const AuthCtx = createContext<Ctx>(null as unknown as Ctx);
 
+/** Profil et sites : depuis le serveur si possible, sinon depuis la copie gardée sur l'appareil */
+async function chargerProfil(id: string): Promise<Compte | null> {
+  try {
+    const { data, error } = await supabase.from('profils').select('*').eq('id', id).maybeSingle();
+    if (error) throw error;
+    if (data) await metaEcrire(`profil-${id}`, data);
+    return (data as Compte) ?? null;
+  } catch {
+    return (await metaLire<Compte>(`profil-${id}`)) ?? null; // hors ligne
+  }
+}
+
+export async function chargerSites(): Promise<Site[]> {
+  try {
+    const { data, error } = await supabase.from('sites').select('id, code, nom, type').order('id');
+    if (error) throw error;
+    if (data?.length) { await metaEcrire('sites', data); return data as Site[]; }
+  } catch { /* hors ligne */ }
+  return (await metaLire<Site[]>('sites')) ?? SITES_DEFAUT;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [etat, setEtat] = useState<Etat>('chargement');
+  const [etat, setEtat] = useState<Etat>(baseConfiguree ? 'chargement' : 'non_configure');
   const [compte, setCompte] = useState<Compte | null>(null);
   const [sites, setSites] = useState<Site[]>(SITES_DEFAUT);
 
   const rafraichir = useCallback(async () => {
-    const [comptes, s] = await Promise.all([tout<Compte>('comptes'), metaLire<Site[]>('sites')]);
-    setSites(s?.length ? s : SITES_DEFAUT);
-    if (!comptes.some((c) => c.role === 'admin')) { setEtat('initialisation'); setCompte(null); return; }
-    const id = lireSession();
-    const c = comptes.find((x) => x.id === id && x.actif && !x.en_attente) ?? null;
-    setCompte(c);
-    setEtat(c ? 'connecte' : 'deconnecte');
+    if (!baseConfiguree) return;
+    setSites(await chargerSites());
+    const { data } = await supabase.auth.getSession();
+    const id = data.session?.user.id;
+    if (!id) { setCompte(null); setEtat('deconnecte'); return; }
+    const p = await chargerProfil(id);
+    setCompte(p);
+    setEtat(!p ? 'deconnecte' : p.valide && p.actif ? 'connecte' : 'en_attente');
   }, []);
 
-  useEffect(() => { rafraichir().catch(() => setEtat('deconnecte')); demanderPersistance(); }, [rafraichir]);
+  useEffect(() => {
+    demanderPersistance();
+    rafraichir().catch(() => setEtat('deconnecte'));
+    const { data } = supabase.auth.onAuthStateChange((evt) => {
+      if (evt === 'SIGNED_OUT') { setCompte(null); setEtat('deconnecte'); }
+    });
+    return () => data.subscription.unsubscribe();
+  }, [rafraichir]);
 
-  async function connexion(identifiant: string, motDePasse: string, rester: boolean) {
-    const comptes = await tout<Compte>('comptes');
-    const c = comptes.find((x) => x.identifiant.toLowerCase() === identifiant.trim().toLowerCase());
-    // même temps de calcul que le compte existe ou non
-    const essai = await deriver(motDePasse, c?.sel ?? '00'.repeat(16));
-    if (!c || essai !== c.empreinte) throw new Error('Identifiant ou mot de passe incorrect.');
-    if (c.en_attente) throw new Error('Votre compte attend la validation de l’administrateur.');
-    if (!c.actif) throw new Error('Ce compte est désactivé. Adressez-vous à l’administrateur.');
-    ecrireSession(c.id, rester);
-    setCompte(c); setEtat('connecte');
-  }
-
-  function deconnexion() { ecrireSession(null); setCompte(null); setEtat('deconnecte'); }
-
-  async function verifierAdmin(identifiant: string, motDePasse: string) {
-    const comptes = await tout<Compte>('comptes');
-    const a = comptes.find((x) => x.identifiant.toLowerCase() === identifiant.trim().toLowerCase() && x.role === 'admin' && x.actif && !x.en_attente);
-    const essai = await deriver(motDePasse, a?.sel ?? '00'.repeat(16));
-    if (!a || essai !== a.empreinte) throw new Error('Identifiants administrateur incorrects.');
+  async function connexion(identifiant: string, motDePasse: string) {
+    const { error } = await supabase.auth.signInWithPassword({ email: emailDe(identifiant), password: motDePasse });
+    if (error) throw new Error(messageErreur(error));
+    await rafraichir();
   }
 
   async function inscrire(p: { nom: string; identifiant: string; motDePasse: string; telephone: string; site_id: number | null }) {
     const err = verifierRegles(p.motDePasse); if (err) throw new Error(err);
-    if (!p.nom.trim() || !p.identifiant.trim()) throw new Error('Nom et identifiant obligatoires.');
-    const comptes = await tout<Compte>('comptes');
-    if (comptes.some((c) => c.identifiant.toLowerCase() === p.identifiant.trim().toLowerCase())) throw new Error('Cet identifiant est déjà pris, choisissez-en un autre.');
-    const c: Compte = {
-      id: crypto.randomUUID(), identifiant: p.identifiant.trim(), nom_complet: p.nom.trim(), role: 'agent',
-      site_id: null, site_souhaite: p.site_id, telephone: p.telephone.trim(), actif: false, en_attente: true,
-      created_at: new Date().toISOString(), ...(await preparerMotDePasse(p.motDePasse)),
-    };
-    await ecrire('comptes', c);
-    return c;
-  }
-
-  async function validerSurPlace(p: { demande: Compte; identifiantAdmin: string; motDePasseAdmin: string; site_id: number | null }) {
-    await verifierAdmin(p.identifiantAdmin, p.motDePasseAdmin);
-    await ecrire('comptes', { ...p.demande, actif: true, en_attente: false, site_id: p.site_id });
-  }
-
-  async function initialiser(p: { nom: string; identifiant: string; motDePasse: string }) {
-    if ((await tout<Compte>('comptes')).some((c) => c.role === 'admin')) throw new Error('Un administrateur existe déjà sur cet appareil.');
-    const err = verifierRegles(p.motDePasse); if (err) throw new Error(err);
-    const c: Compte = {
-      id: crypto.randomUUID(), identifiant: p.identifiant.trim(), nom_complet: p.nom.trim(), role: 'admin',
-      site_id: null, actif: true, created_at: new Date().toISOString(), ...(await preparerMotDePasse(p.motDePasse)),
-    };
-    if (!(await metaLire('sites'))) await metaEcrire('sites', SITES_DEFAUT);
-    await ecrire('comptes', c);
-    ecrireSession(c.id);
+    const identifiant = p.identifiant.trim().toLowerCase();
+    if (!/^[a-z0-9._-]{3,30}$/.test(identifiant)) throw new Error('Identifiant : 3 à 30 lettres, chiffres, points ou tirets, sans espace ni accent.');
+    if (!p.nom.trim()) throw new Error('Indiquez votre nom.');
+    const { error } = await supabase.auth.signUp({
+      email: emailDe(identifiant), password: p.motDePasse,
+      options: { data: { identifiant, nom_complet: p.nom.trim(), telephone: p.telephone.trim(), site_souhaite: p.site_id ?? '' } },
+    });
+    if (error) throw new Error(messageErreur(error));
     await rafraichir();
   }
 
+  async function deconnexion() {
+    await supabase.auth.signOut({ scope: 'local' }).catch(() => {});
+    setCompte(null); setEtat('deconnecte');
+  }
+
   return (
-    <AuthCtx.Provider value={{ etat, compte, sites, connexion, deconnexion, initialiser, inscrire, validerSurPlace, rafraichir }}>
+    <AuthCtx.Provider value={{ etat, compte, sites, connexion, deconnexion, inscrire, rafraichir }}>
       {children}
     </AuthCtx.Provider>
   );
